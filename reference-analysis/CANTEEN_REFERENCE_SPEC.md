@@ -1,0 +1,7 @@
+﻿# Canteen reference specification
+
+Observed 20 September in Chrome: after settling in B3, the lower-centre bell is labelled Ring for service. Clicking disables it with Server on the way. A cream-shirted server approaches. The film continues throughout. The bell then becomes disabled Enjoying your order with help Popcorn & drink. Popcorn/drink geometry appears near the seated view. No menu, categories, cart, quantity, price or checkout was shown in this flow. Those ecommerce features must not be invented.
+
+Recording 152–158 seconds shows a physical rear lounge/canteen: warm tan walls, dark ribbed counter with thin bronze trim, dark shelves with bottles/cups, stools and small tables, plants and seated block-style guests. It is reached by walking behind the theatre. No dedicated canteen menu overlay or product price is visible in the supplied recording. Reconstruct this walkable environment and observed bell service; document unobserved controls as not applicable, not tested/passed.
+
+Theatre seat and persistent video remain intact during service. Returning from lounge should use normal movement; a convenience return route must be explicitly identified as an adaptation if added. Delivery timing cannot be accurately inferred from the current live run because the reference runs around 1 FPS while controlled in the background. Use a smooth finite original animation; do not claim exact timing parity.
