@@ -123,11 +123,7 @@ export function buildCinema(scene:T.Scene){
   box(scene,8.98,5.04,.08,0,3,-4.96,base);
   box(scene,7.3,.3,.65,0,.18,-4.38,panel,.035);
   for(let x=-3.5;x<3.7;x+=1.18)box(scene,.018,.27,.015,x,.2,-4.04,bronze);
-  const cv=document.createElement('canvas');cv.width=1600;cv.height=900;const cx=cv.getContext('2d')!;
-  const gradient=cx.createLinearGradient(0,0,0,900);gradient.addColorStop(0,'#253b43');gradient.addColorStop(.6,'#718176');gradient.addColorStop(1,'#172a2c');cx.fillStyle=gradient;cx.fillRect(0,0,1600,900);
-  for(let layer=0;layer<5;layer++){cx.fillStyle=['#586d69','#435e5d','#304b4e','#203c41','#132a30'][layer];cx.beginPath();cx.moveTo(0,900);for(let x=0;x<=1600;x+=40)cx.lineTo(x,370+layer*85+Math.sin(x*.008+layer*2)*100+Math.cos(x*.021+layer)*36);cx.lineTo(1600,900);cx.fill();}
-  cx.fillStyle='#efe8d7';cx.font='600 12px Arial';cx.fillText('DARLING CINEMAS ORIGINAL',100,380);cx.font='bold 76px Georgia';cx.fillText('THE QUIET HOURS',95,450);cx.font='18px Arial';cx.fillText('There is a world beyond the window.',100,490);
-  const welcome=new T.CanvasTexture(cv);welcome.colorSpace=T.SRGBColorSpace;
+  const welcome=new T.TextureLoader().load('/darling-default.jpg');welcome.colorSpace=T.SRGBColorSpace;
   const screen=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),new T.MeshBasicMaterial({map:welcome,toneMapped:false}));screen.position.set(0,SCREEN.y,SCREEN.z);scene.add(screen);
   for(const s of [-1,1]){
     const speaker=new T.Group();speaker.position.set(s*6.1,0,-4.15);scene.add(speaker);box(speaker,.75,2.15,.62,0,1.075,0,base,.025);
