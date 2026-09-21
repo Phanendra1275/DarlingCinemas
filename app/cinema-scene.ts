@@ -159,30 +159,23 @@ export function buildCinema(scene:T.Scene){
   for(const side of [-1,1])collision.push(box(scene,.25,5.6,7,side*7.8,2.8,13.5,tan));
   box(scene,15.6,.2,7,0,5.6,13.5,base);
   const bannerTex=new T.TextureLoader().load('/darling-banner.jpg');bannerTex.colorSpace=T.SRGBColorSpace;
-  for(const s of [-1,1]){
-    const promoGroup=new T.Group();promoGroup.position.set(s*7.67,3.2,0);promoGroup.rotation.y=s*-Math.PI/2;scene.add(promoGroup);
-    box(promoGroup,8.2,3.4,.1,0,0,-.05,trim);
-    box(promoGroup,8.2,.1,.15,0,1.7,0,bronze);box(promoGroup,8.2,.1,.15,0,-1.7,0,bronze);
-    box(promoGroup,.1,3.4,.15,-4.05,0,0,bronze);box(promoGroup,.1,3.4,.15,4.05,0,0,bronze);
-    const banner=new T.Mesh(new T.PlaneGeometry(8.0,3.3),new T.MeshStandardMaterial({map:bannerTex,roughness:0.4,metalness:0.1,emissive:'#ffffff',emissiveIntensity:0.05,emissiveMap:bannerTex}));
-    banner.position.set(0,0,.01);promoGroup.add(banner);
-    const spot=new T.SpotLight('#ffffff',5,12,Math.PI/4,0.6,1);spot.position.set(s*5,5.4,0);spot.target=banner;scene.add(spot);scene.add(spot.target);
-  }
-
+  const promoGroup=new T.Group();promoGroup.position.set(-1.125,2.95,10.126);scene.add(promoGroup);
+  box(promoGroup,8.2,4.7,.1,0,0,-.05,trim);
+  box(promoGroup,8.2,.1,.15,0,2.3,0,bronze);box(promoGroup,8.2,.1,.15,0,-2.3,0,bronze);
+  box(promoGroup,.1,4.5,.15,-4.05,0,0,bronze);box(promoGroup,.1,4.5,.15,4.05,0,0,bronze);
+  const banner=new T.Mesh(new T.PlaneGeometry(8.0,4.5),new T.MeshBasicMaterial({map:bannerTex}));banner.position.set(0,0,.01);promoGroup.add(banner);
   const loungeLamp=new T.PointLight('#ffdda9',35,12,2);loungeLamp.position.set(0,4.5,13);scene.add(loungeLamp);
   const counterGroup=new T.Group();counterGroup.position.set(1,loungeFloor,14.5);scene.add(counterGroup);
   box(counterGroup,6.2,1.15,1,0,.575,0,counter);box(counterGroup,6.45,.14,1.25,0,1.21,0,base,.03);
   for(let x=-3;x<=3;x+=.14)box(counterGroup,.055,1.1,.035,x,.59,-.52,bronze);
   for(const x of [-1.9,1.9])for(const y of [1.3,2.1,2.9]){box(scene,1.6,.07,.36,x+1,y+loungeFloor,16.5,base);for(let i=0;i<4;i++){const b=new T.Mesh(new T.CylinderGeometry(.055,.07,.28,8),bottle);b.position.set(x+.45+i*.27,y+loungeFloor+.17,16.5);scene.add(b);}}
-  
   const menuTex=new T.TextureLoader().load('/menu-card.jpg');menuTex.colorSpace=T.SRGBColorSpace;
-  const menuGroup=new T.Group();menuGroup.position.set(1,4.2,16.87);menuGroup.rotation.y=Math.PI;scene.add(menuGroup);
-  box(menuGroup,5.0,1.4,.1,0,0,-.05,trim);
-  box(menuGroup,5.0,.1,.15,0,0.7,0,bronze);box(menuGroup,5.0,.1,.15,0,-0.7,0,bronze);
-  box(menuGroup,.1,1.4,.15,-2.5,0,0,bronze);box(menuGroup,.1,1.4,.15,2.5,0,0,bronze);
-  const menu=new T.Mesh(new T.PlaneGeometry(4.9,1.3),new T.MeshBasicMaterial({map:menuTex}));
+  const menuGroup=new T.Group();menuGroup.position.set(1,3.0,16.87);menuGroup.rotation.y=Math.PI;scene.add(menuGroup);
+  box(menuGroup,2.0,2.7,.1,0,0,-.05,trim);
+  box(menuGroup,2.0,.1,.15,0,1.3,0,bronze);box(menuGroup,2.0,.1,.15,0,-1.3,0,bronze);
+  box(menuGroup,.1,2.5,.15,-.95,0,0,bronze);box(menuGroup,.1,2.5,.15,.95,0,0,bronze);
+  const menu=new T.Mesh(new T.PlaneGeometry(1.8,2.5),new T.MeshBasicMaterial({map:menuTex}));
   menu.position.set(0,0,.01);menuGroup.add(menu);
-  
   for(const x of [-5,-2.8]){const table=new T.Mesh(new T.CylinderGeometry(.65,.65,.1,24),counter);table.position.set(x,loungeFloor+.95,11.8);scene.add(table);box(scene,.1,.85,.1,x,loungeFloor+.45,11.8,base);for(const dz of [-.95,.95]){box(scene,.65,.1,.65,x,loungeFloor+.58,11.8+dz,red,.03);for(const dx of [-.24,.24])box(scene,.06,.55,.06,x+dx,loungeFloor+.3,11.8+dz,base);}}
   for(const x of [-.8,1,2.8]){box(scene,.6,.12,.6,x,loungeFloor+.65,13.3,red,.04);box(scene,.1,.6,.1,x,loungeFloor+.3,13.3,base);}
   for(const x of [-1.5, -0.2, 1.2, 2.5]){const snack=createSnacks();snack.position.set(x,loungeFloor+1.31,14.4);scene.add(snack);}

@@ -1,4 +1,3 @@
-/* eslint-disable react-hooks/immutability */
 import {useState,useRef,useEffect,useCallback} from 'react';
 export function useLocalVideo(){
  const [videoElement,setVideoElement]=useState<HTMLVideoElement|null>(null),[isPlaying,setIsPlaying]=useState(false),[progress,setProgress]=useState(0),[duration,setDuration]=useState(0),[volume,setVolume]=useState(1),[isMuted,setIsMuted]=useState(false),[playbackRate,setPlaybackRate]=useState(1),[isLooping,setIsLooping]=useState(false),[filename,setFilename]=useState<string|null>(null),[status,setStatus]=useState<'idle'|'loading'|'ready'|'error'>('idle'),[error,setError]=useState('');

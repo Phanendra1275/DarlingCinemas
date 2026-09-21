@@ -1,21 +1,19 @@
 "use client";
-"use client";
 import {useEffect,useRef,useState} from 'react';
 import Theatre,{defaultCamera, REFERENCE_GEOMETRY_VIEW, type CameraSettings} from './theatre';
 import {seats,THEATRE_CONFIG} from './cinema-scene';
-import {Armchair,Film,Users,UserPlus,Link,Globe,ArrowRight,Maximize,Play,Pause,Volume2,VolumeX,Upload,Repeat,X,ArrowLeft,MessageSquare,Send,Search,RefreshCcw,Monitor,LayoutGrid,Gauge,UserRound,Focus,Bell,Footprints} from 'lucide-react';
+import {Armchair,Film,Users,Maximize,Play,Pause,Volume2,VolumeX,Upload,Repeat,X,ArrowLeft,MessageSquare,Send,Search,RefreshCcw,Monitor,LayoutGrid,Gauge,UserRound,Focus,Bell,Footprints} from 'lucide-react';
 import {useLocalVideo} from '../hooks/use-local-video';
 import {useMobile} from '../hooks/use-mobile';
 import {useAutoHide} from '../hooks/use-auto-hide';
 import {MobileJoystick} from '../components/mobile-joystick';
 import {sessionManager} from '../lib/auth/sessionManager';
 import {darlingStorage} from '../lib/storage/darlingStorage';
-import './darling.css';
 type Panel='player'|'profile'|'experience'|'seats'|'settings'|'party'|'entry'|null;
 const jackets=[['Sand','#d6cdb4'],['Burgundy','#803747'],['Sage','#87937b'],['Slate','#687781'],['Lilac','#a797af']];
 const time=(v:number)=>{if(!Number.isFinite(v))return '0:00';const s=Math.floor(v);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
 export default function Home(){
- const media=useLocalVideo(),{isTouch}=useMobile();const [seat,setSeat]=useState<string|null>(null),[nearby,setNearby]=useState<string|null>(null),[panel,setPanel]=useState<Panel>(null),[selection,setSelection]=useState('B3'),[walking,setWalking]=useState(false),[walk,setWalk]=useState(0),[reset,setReset]=useState(0),[zoom,setZoom]=useState(false),[fps,setFps]=useState<number|null>(null),[quality,setQuality]=useState<'Performance'|'Adaptive'|'Ultra'>('Performance'),[reduced,setReduced]=useState(false),[highRefresh,setHighRefresh]=useState(false),[name,setName]=useState('Guest'),[jacket,setJacket]=useState(jackets[0][1]),[gender,setGender]=useState('Male'),[appState,setAppState]=useState<'BOOT'|'RESTORING_PROFILE'|'ONBOARDING'|'RETURNING_USER'|'THEATRE_LOADING'|'EXPLORING'>('BOOT'),[pwd,setPwd]=useState(''),[confirmPwd,setConfirmPwd]=useState(''),[route,setRoute]=useState<{id:string;request:number}|null>(null),[service,setService]=useState(0),[serviceState,setServiceState]=useState(''),[notice,setNotice]=useState(''),[dev,setDev]=useState(false),[camera,setCamera]=useState<CameraSettings>(defaultCamera),[partyTab,setPartyTab]=useState<'create'|'join'>('create'),[partyName,setPartyName]=useState('A little movie night'),[partyCode,setPartyCode]=useState('');
+ const media=useLocalVideo(),{isTouch}=useMobile();const [seat,setSeat]=useState<string|null>(null),[nearby,setNearby]=useState<string|null>(null),[panel,setPanel]=useState<Panel>(null),[selection,setSelection]=useState('B3'),[walking,setWalking]=useState(false),[walk,setWalk]=useState(0),[reset,setReset]=useState(0),[zoom,setZoom]=useState(false),[fps,setFps]=useState<number|null>(null),[quality,setQuality]=useState<'Performance'|'Adaptive'|'Ultra'>('Performance'),[reduced,setReduced]=useState(false),[highRefresh,setHighRefresh]=useState(false),[name,setName]=useState('Guest'),[jacket,setJacket]=useState(jackets[0][1]),[gender,setGender]=useState('Male'),[appState,setAppState]=useState<'BOOT'|'RESTORING_PROFILE'|'ONBOARDING'|'RETURNING_USER'|'THEATRE_LOADING'|'EXPLORING'>('BOOT'),[pwd,setPwd]=useState(''),[confirmPwd,setConfirmPwd]=useState(''),[route,setRoute]=useState<{id:string;request:number}|null>(null),[service,setService]=useState(0),[serviceState,setServiceState]=useState(''),[notice,setNotice]=useState(''),[dev,setDev]=useState(false),[camera,setCamera]=useState<CameraSettings>(defaultCamera);
  const input=useRef<HTMLInputElement>(null),move=useRef({x:0,y:0,magnitude:0}),dialog=useRef<HTMLDivElement>(null),lastFocus=useRef<HTMLElement|null>(null);
  const {showHUD,beginInteraction,endInteraction}=useAutoHide(media.isPlaying,!!seat);
  useEffect(()=>{
@@ -82,78 +80,13 @@ export default function Home(){
   </footer>
   {notice&&<div className="dc-toast" role="status">{notice}<button aria-label="Dismiss message" onClick={()=>setNotice('')}><X size={14}/></button></div>}
   {panel&&<div className="dc-backdrop" onClick={close} data-ui-control><div className="dc-panel" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="panel-title" onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key!=='Tab')return;const all=dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input,select,[tabindex="0"]');if(!all?.length)return;if(e.shiftKey&&document.activeElement===all[0]){e.preventDefault();all[all.length-1].focus();}else if(!e.shiftKey&&document.activeElement===all[all.length-1]){e.preventDefault();all[0].focus();}}}>
-   <button className="dc-close" aria-label="Close panel" onClick={close}><X/></button>
-   {panel!=='party'&&<><span className="dc-eyebrow">{panel==='profile'?'YOUR PLAYER':panel==='settings'?'THE FINER DETAILS':panel==='seats'?'MAKE YOURSELF COMFORTABLE':'DARLING CINEMAS'}</span><h2 id="panel-title">{panelNames[panel]}</h2></>}
+   <button className="dc-close" aria-label="Close panel" onClick={close}><X/></button><span className="dc-eyebrow">{panel==='profile'?'YOUR PLAYER':panel==='settings'?'THE FINER DETAILS':panel==='seats'?'MAKE YOURSELF COMFORTABLE':'DARLING CINEMAS'}</span><h2 id="panel-title">{panelNames[panel]}</h2>
    {panel==='player'&&<><p>Bring your own video. Your film stays on your device.</p>{media.filename&&<div className="dc-media"><Film size={30}/><strong>{title}</strong><input aria-label="Player seek" type="range" min="0" max={media.duration||1} value={Math.min(media.progress,media.duration||1)} step=".1" onChange={e=>media.seek(+e.target.value)}/><div className="dc-media-row"><span>{time(media.progress)} / {time(media.duration)}</span><button aria-label={media.isPlaying?'Pause video':'Play video'} onClick={media.togglePlay}>{media.isPlaying?<Pause/>:<Play/>}</button><button aria-label="Player mute" onClick={media.toggleMute}>{media.isMuted?<VolumeX/>:<Volume2/>}</button><input aria-label="Volume" type="range" min="0" max="1" step=".05" value={media.volume} onChange={e=>media.changeVolume(+e.target.value)}/></div><div className="dc-media-row"><label>Speed <select aria-label="Playback speed" value={media.playbackRate} onChange={e=>media.changePlaybackRate(+e.target.value)}>{[.5,.75,1,1.25,1.5,2].map(v=><option key={v} value={v}>{v===1?'Normal':`${v}×`}</option>)}</select></label><button aria-pressed={media.isLooping} onClick={media.toggleLoop}><Repeat size={14}/> Loop {media.isLooping?'on':'off'}</button><button onClick={()=>setPanel('seats')}><Armchair size={14}/> Choose a seat</button></div></div>}<div className="dc-tabs"><span className="selected">My video</span><button disabled title="Remote video sources are unavailable">Video link · Coming soon</button></div><div className="dc-drop" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(e.dataTransfer.files[0])load(e.dataTransfer.files[0]);}}><Upload/><h3>Bring your own story.</h3><p>Drop a video here, or choose one from your device.</p><button className="dc-pill" disabled={media.status==='loading'} onClick={()=>input.current?.click()}>{media.status==='loading'?'Preparing video…':media.filename?'Change video':'Choose a video'} →</button><small>MP4 and WebM. MOV where supported.<br/>Nothing is uploaded.</small></div>{media.status==='error'&&<p role="alert" className="dc-error">{media.error||'This video could not be played. Try an MP4 with H.264 video or a WebM file.'}</p>}<button className="dc-wide" onClick={close}>Back to the cinema →</button></>}
    {panel==='profile'&&<><p>Your presence in the cinema. No account required.</p><div className="dc-avatar-preview" style={{'--jacket':jacket} as React.CSSProperties}><div className="avatar-head"/><div className="avatar-body"/><div className="avatar-legs"/></div><label className="dc-field">DISPLAY NAME<input value={name} maxLength={24} onChange={e=>setName(e.target.value)} /></label><span className="dc-eyebrow">YOUR JACKET</span><div className="dc-jackets" role="radiogroup" aria-label="Your jacket">{jackets.map(([label,color])=><button key={label} role="radio" aria-checked={jacket===color} onClick={()=>setJacket(color)}><i style={{background:color}}/>{label}</button>)}</div><button className="dc-wide" onClick={()=>{const profile=darlingStorage.loadProfile(); if(profile){profile.name=name;profile.jacket=jacket;darlingStorage.saveProfile(profile);} setNotice('Your player has been saved.');}}>Save my player</button><button className="dc-wide secondary" onClick={enter}>Walk with my player →</button><button className="dc-wide secondary" style={{marginTop: '16px', background: 'rgba(255,255,255,0.05)'}} onClick={()=>{sessionManager.clearSession(); setNotice('Signed out.'); close(); resetView(); setAppState('ONBOARDING');}}>SIGN OUT</button><button className="dc-wide secondary" style={{marginTop: '8px', color: '#ff6b6b', background: 'rgba(255,0,0,0.05)'}} onClick={()=>{if(confirm('Are you sure you want to delete your local profile?')){sessionManager.deleteLocalProfile(); setNotice('Local profile deleted.'); close(); resetView(); setAppState('ONBOARDING');}}}>DELETE LOCAL PROFILE</button><p>WASD to move. Drag to look. E to sit or stand.<br/>On mobile, use the on-screen thumbstick.</p></>}
    {panel==='seats'&&<><p>Ten wide recliners. Not a bad seat in the house.</p><div className="dc-seat-map"><div className="dc-map-screen">SCREEN</div>{['A','B'].map(row=><div className="dc-seat-row" key={row}><span>{row}</span>{seats.filter(s=>s.id.startsWith(row)).map(s=><button key={s.id} aria-label={`Select seat ${s.id}`} aria-pressed={selection===s.id} className={selection===s.id?'selected':''} onClick={()=>setSelection(s.id)}><Armchair/>{s.id}</button>)}</div>)}<small>RAISED PLATFORM · ENTRANCE</small></div><span className="dc-eyebrow">YOUR SPOT</span><h3>Seat {selection}</h3><p>{selection.startsWith('B')?'Raised back row':'Main floor'} · {selection.endsWith('3')?'A perfectly centered view':'A view of your own'}</p><button className="dc-wide" onClick={()=>{stand();setRoute({id:selection,request:Date.now()});close();}}>Settle into {selection} →</button><p>We will walk you there. You can take over at any time.</p></>}
    {panel==='settings'&&<><p>A few thoughtful adjustments. Nothing in the way.</p><span className="dc-eyebrow">RENDER QUALITY · {fps??'—'} FPS</span><div className="dc-quality" role="radiogroup" aria-label="Render quality">{(['Performance','Adaptive','Ultra'] as const).map(q=><button key={q} role="radio" aria-checked={quality===q} onClick={()=>{setQuality(q); darlingStorage.savePreferences({quality: q, reducedMotion: reduced, highRefresh});}}><strong>{q}</strong><span>{q==='Performance'?'Lower pixel ratio and no heavy shadows.':q==='Adaptive'?'Balances clarity and frame rate.':'High pixel ratio and soft shadows for strong GPUs.'}</span></button>)}</div><label className="dc-switch">High refresh target<input type="checkbox" checked={highRefresh} onChange={e=>{setHighRefresh(e.target.checked); darlingStorage.savePreferences({quality, reducedMotion: reduced, highRefresh: e.target.checked});}}/></label><label className="dc-switch">Reduced motion<input type="checkbox" checked={reduced} onChange={e=>{setReduced(e.target.checked); darlingStorage.savePreferences({quality, reducedMotion: e.target.checked, highRefresh});}}/></label><h3>Layout diagnostics</h3><p>{THEATRE_CONFIG.seatGapX.toFixed(2)} m seat gaps. {THEATRE_CONFIG.sideAisleWidth.toFixed(2)} m side aisles. Ten physical seats.</p><button className="dc-wide" onClick={resetView}>Return to the entrance →</button></>}
    {(panel==='experience'||panel==='entry')&&<><p>For the stories that deserve your full attention.</p><div className="dc-landscape"><span>Leave the everyday outside.</span></div><p>Deep burgundy recliners. Warm architectural light. Enough room to breathe. A private cinema with ten places, and every seat is yours to try.</p><p>Choose a video from your device, walk through the theatre, and settle into your own view. Your video remains local.</p><button className="dc-wide" onClick={panel==='entry'?enter:close}>{panel==='entry'?'Enter the cinema':'Back to the cinema'} →</button></>}
-   {panel==='party'&&<><h2 id="panel-title" style={{margin:'0 0 4px', fontSize:'36px', lineHeight:'1.1'}}>Good stories.<br/>Better company.</h2><p style={{margin:'0 0 24px', fontSize:'13px'}}>One private cinema. Ten places. A shared moment.</p>
-      <div className="dc-tabs">
-        <button className={partyTab==='create'?'selected':''} onClick={()=>setPartyTab('create')}><UserPlus size={14}/> Create a party</button>
-        <button className={partyTab==='join'?'selected':''} onClick={()=>setPartyTab('join')}><Link size={14}/> Join a party</button>
-      </div>
-      {partyTab==='create' && <>
-        <label className="dc-field">YOUR NAME
-          <div style={{display:'flex', gap:'16px', alignItems:'center'}}>
-            <div style={{width:'42px',height:'42px',borderRadius:'50%',background:'#3f4135',border:'1px solid rgba(255,255,255,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:'14px',color:'white'}}>{name.charAt(0).toUpperCase()}</div>
-            <input style={{flex:1}} value={name} onChange={e=>setName(e.target.value)} />
-          </div>
-        </label>
-        <label className="dc-field" style={{marginTop:'24px'}}>GIVE YOUR EVENING A NAME
-          <input value={partyName} onChange={e=>setPartyName(e.target.value)} />
-        </label>
-        <div style={{borderBottom: '1px solid rgba(255,255,255,0.05)', margin:'24px 0'}}></div>
-        <button className="dc-option-row" style={{display:'flex',alignItems:'center',gap:'16px',width:'100%',textAlign:'left',padding:'12px 0'}}>
-          <Film size={20} style={{opacity:0.6}}/>
-          <div style={{flex:1}}>
-            <span className="dc-eyebrow" style={{display:'block',marginBottom:'4px',fontSize:'9px'}}>ON YOUR SCREEN</span>
-            <strong style={{display:'block',fontWeight:500,fontSize:'13px',color:'white'}}>{media.filename?title:'Select a video'}</strong>
-          </div>
-          <span style={{opacity:0.6,fontSize:'12px',display:'flex',alignItems:'center',gap:'4px'}}>Change <ArrowRight size={14}/></span>
-        </button>
-        <div style={{borderBottom: '1px solid rgba(255,255,255,0.05)', margin:'24px 0'}}></div>
-        <button className="dc-option-row" style={{display:'flex',alignItems:'center',gap:'16px',width:'100%',textAlign:'left',padding:'12px 0'}}>
-          <Globe size={20} style={{opacity:0.6}}/>
-          <div style={{flex:1}}>
-            <strong style={{display:'block',fontWeight:500,fontSize:'13px',color:'white',marginBottom:'4px'}}>Pick from the TMDB collection</strong>
-            <span style={{opacity:0.6,fontSize:'11px'}}>Search movies, series & anime, then choose your server</span>
-          </div>
-          <ArrowRight size={16} style={{opacity:0.6}}/>
-        </button>
-        <div style={{borderBottom: '1px solid rgba(255,255,255,0.05)', margin:'24px 0'}}></div>
-        <div style={{display:'flex', gap:'16px', alignItems:'flex-start', marginBottom:'32px'}}>
-          <Monitor size={22} style={{opacity:0.8, marginTop:'2px'}}/>
-          <div>
-            <strong style={{display:'block',fontSize:'14px',color:'white',marginBottom:'6px'}}>Online watch party.</strong>
-            <p style={{margin:0,opacity:0.7,fontSize:'12px',lineHeight:'1.6'}}>Anyone with the room code can join from another device. Players, seats and the selected film stay in sync. Direct-video playback follows the host.</p>
-          </div>
-        </div>
-        <button className="dc-wide-white" onClick={()=>setNotice('Watch party backend not connected yet')}><span style={{display:'flex',alignItems:'center',gap:'8px'}}><UserPlus size={16}/> Create watch party</span> <ArrowRight size={18}/></button>
-      </>}
-      {partyTab==='join' && <>
-        <label className="dc-field">YOUR NAME
-          <div style={{display:'flex', gap:'16px', alignItems:'center'}}>
-            <div style={{width:'42px',height:'42px',borderRadius:'50%',background:'#3f4135',border:'1px solid rgba(255,255,255,0.1)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:600,fontSize:'14px',color:'white'}}>{name.charAt(0).toUpperCase()}</div>
-            <input style={{flex:1}} value={name} onChange={e=>setName(e.target.value)} />
-          </div>
-        </label>
-        <label className="dc-field" style={{marginTop:'24px'}}>ROOM CODE OR INVITATION LINK
-          <input placeholder="e.g. K7MN2A" value={partyCode} onChange={e=>setPartyCode(e.target.value)} />
-        </label>
-        <div style={{borderBottom: '1px solid rgba(255,255,255,0.05)', margin:'24px 0'}}></div>
-        <div style={{display:'flex', gap:'16px', alignItems:'flex-start', marginBottom:'32px'}}>
-          <Monitor size={22} style={{opacity:0.8, marginTop:'2px'}}/>
-          <div>
-            <strong style={{display:'block',fontSize:'14px',color:'white',marginBottom:'6px'}}>Online watch party.</strong>
-            <p style={{margin:0,opacity:0.7,fontSize:'12px',lineHeight:'1.6'}}>Anyone with the room code can join from another device. Players, seats and the selected film stay in sync. Direct-video playback follows the host.</p>
-          </div>
-        </div>
-        <button className="dc-wide-white" onClick={()=>setNotice('Watch party backend not connected yet')}><span style={{display:'flex',alignItems:'center',gap:'8px'}}><Users size={16}/> Join the cinema</span> <ArrowRight size={18}/></button>
-        <p style={{textAlign:'center', marginTop:'24px', opacity:0.6, fontSize:'11px'}}>No account. No upload. Keep the host tab open.</p>
-      </>}
-    </>}
+   {panel==='party'&&<><p>One private cinema. Ten places. A shared moment.</p><div className="dc-unavailable"><Users size={36}/><h3>Watch party is coming soon.</h3><p>Online rooms and synchronized guests are not available in this local version. Characters in the theatre are simulated guests.</p><button className="dc-wide" disabled>Create watch party · Coming soon</button></div><button className="dc-wide secondary" onClick={close}>Back to the cinema →</button></>}
    <div className="dc-panel-footer">DARLING CINEMAS · THE PRIVATE CINEMA</div>
   </div></div>}
   {dev&&<details className="dc-debug"><summary>Camera tuning</summary><button onClick={()=>{stand();setRoute({id:"CANTEEN",request:Date.now()});}}>Walk to canteen (QA)</button><button onClick={()=>{setCamera(REFERENCE_GEOMETRY_VIEW);}}>Load Reference Camera</button><button onClick={async()=>{const response=await fetch("/qa/cinema-qa.mp4");load(new File([await response.blob()],"Generated QA clip.mp4",{type:"video/mp4"}));}}>Load generated QA clip</button>{Object.entries(camera).map(([key,value])=><label key={key}>{key}<input type="number" step={key==='sensitivity'?'.001':'.1'} value={value} onChange={e=>setCamera({...camera,[key]:+e.target.value})}/></label>)}</details>}

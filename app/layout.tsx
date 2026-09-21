@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./darling.css";
 
 export const metadata: Metadata = {
   title: "Darling Cinemas - Your private cinema",
