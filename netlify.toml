@@ -1,0 +1,8 @@
+[build]
+  command = "npm run build"
+  publish = "dist/client"
+
+[build.environment]
+  NODE_VERSION = "22"
+  NEXT_PLUGIN_FORCE_RUN = "false"
+  NETLIFY_NEXT_PLUGIN_SKIP = "true"
