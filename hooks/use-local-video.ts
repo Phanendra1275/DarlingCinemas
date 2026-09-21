@@ -1,6 +1,6 @@
 import {useState,useRef,useEffect,useCallback} from 'react';
 export function useLocalVideo(){
- const [videoElement,setVideoElement]=useState<HTMLVideoElement|null>(null),[isPlaying,setIsPlaying]=useState(false),[progress,setProgress]=useState(0),[duration,setDuration]=useState(0),[volume,setVolume]=useState(1),[isMuted,setIsMuted]=useState(false),[playbackRate,setPlaybackRate]=useState(1),[isLooping,setIsLooping]=useState(false),[filename,setFilename]=useState<string|null>(null),[status,setStatus]=useState<'idle'|'loading'|'ready'|'error'>('idle'),[error,setError]=useState('');
+ const [videoElement,setVideoElement]=useState<HTMLVideoElement|null>(null),[isPlaying,setIsPlaying]=useState(false),[progress,setProgress]=useState(0),[duration,setDuration]=useState(0),[volume,setVolume]=useState(1),[isMuted,setIsMuted]=useState(false),[playbackRate,setPlaybackRate]=useState(1),[isLooping,setIsLooping]=useState(false),[filename,setFilename]=useState<string|null>(null),[status,setStatus]=useState<'idle'|'loading'|'ready'|'error'>('idle'),[error,setError]=useState(''),[youtubeId,setYoutubeId]=useState<string|null>(null);
  const objectUrl=useRef<string|null>(null),cancelCandidate=useRef<(()=>void)|null>(null),generation=useRef(0);
  useEffect(()=>{const el=document.createElement('video');el.playsInline=true;el.preload='auto';el.crossOrigin='anonymous';
   const sync=()=>{setProgress(el.currentTime);setDuration(Number.isFinite(el.duration)?el.duration:0);setIsPlaying(!el.paused&&!el.ended);setVolume(el.volume);setIsMuted(el.muted);setPlaybackRate(el.playbackRate);setIsLooping(el.loop);};
@@ -14,6 +14,66 @@ export function useLocalVideo(){
   const accept=()=>{if(settled||token!==generation.current)return;settled=true;cleanup();const old=objectUrl.current;objectUrl.current=url;videoElement.pause();videoElement.src=url;videoElement.load();setProgress(0);setDuration(0);setFilename(file.name);if(old)URL.revokeObjectURL(old);cancelCandidate.current=null;};
   cancelCandidate.current=()=>{if(settled)return;settled=true;cleanup();URL.revokeObjectURL(url);};candidate.addEventListener('canplay',accept);candidate.addEventListener('error',reject);timer=setTimeout(reject,30000);candidate.src=url;candidate.load();
  },[videoElement]);
+
+ const loadUrl=useCallback(async(url:string)=>{
+  if(!videoElement)return;
+  cancelCandidate.current?.();
+  const token=++generation.current;
+  setError('');
+  setStatus('loading');
+  setFilename(url);
+  
+  let resolvedUrl = url;
+  
+  // Google Drive
+  const driveMatch = url.match(/(?:drive\.google\.com\/(?:file\/d\/|open\?id=)|drive\.google\.com\/uc\?id=)([-_A-Za-z0-9]+)/);
+  if(driveMatch) {
+    resolvedUrl = `https://corsproxy.io/?url=${encodeURIComponent(`https://drive.google.com/uc?export=download&id=${driveMatch[1]}`)}`;
+  } 
+  // YouTube
+  else if(url.includes('youtube.com') || url.includes('youtu.be')) {
+    const ytMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+    if(ytMatch) {
+      const id = ytMatch[1];
+      setYoutubeId(id);
+      
+      // Stop the native video player if any
+      videoElement.pause();
+      videoElement.removeAttribute('src');
+      videoElement.load();
+      if(objectUrl.current){ URL.revokeObjectURL(objectUrl.current); objectUrl.current = null; }
+      
+      setStatus('ready');
+      setProgress(0);
+      setDuration(0);
+      setIsPlaying(true);
+      return;
+    }
+  }
+
+  // If not YouTube, clear youtubeId just in case
+  setYoutubeId(null);
+
+  if(token!==generation.current)return;
+
+  const candidate=document.createElement('video');
+  candidate.preload='auto';
+  candidate.crossOrigin='anonymous';
+  let timer:ReturnType<typeof setTimeout>;
+  let settled=false;
+
+  const cleanup=()=>{clearTimeout(timer);candidate.removeEventListener('canplay',accept);candidate.removeEventListener('error',reject);candidate.removeAttribute('src');candidate.load();};
+  const reject=()=>{if(settled)return;settled=true;cleanup();if(token===generation.current){setError('This URL is unsupported, could not be read, or lacks CORS headers (Access-Control-Allow-Origin).');setStatus('error');}};
+  const accept=()=>{if(settled||token!==generation.current)return;settled=true;cleanup();const old=objectUrl.current;objectUrl.current=null;videoElement.pause();videoElement.src=resolvedUrl;videoElement.load();setProgress(0);setDuration(0);if(old)URL.revokeObjectURL(old);cancelCandidate.current=null;};
+  
+  cancelCandidate.current=()=>{if(settled)return;settled=true;cleanup();};
+  candidate.addEventListener('canplay',accept);
+  candidate.addEventListener('error',reject);
+  timer=setTimeout(reject,30000);
+  candidate.src=resolvedUrl;
+  candidate.load();
+ },[videoElement]);
+
  const togglePlay=useCallback(()=>{if(!videoElement?.src)return;if(videoElement.paused)void videoElement.play().catch(()=>{setError('Playback could not start. Tap play again or choose a supported video.');setStatus('error');});else videoElement.pause();},[videoElement]);
  const seek=useCallback((v:number)=>{if(videoElement&&Number.isFinite(videoElement.duration))videoElement.currentTime=Math.max(0,Math.min(v,videoElement.duration));},[videoElement]);
  const changeVolume=useCallback((v:number)=>{if(videoElement){videoElement.volume=Math.max(0,Math.min(v,1));if(v>0)videoElement.muted=false;}},[videoElement]);
@@ -21,5 +81,5 @@ export function useLocalVideo(){
  const changePlaybackRate=useCallback((v:number)=>{if(videoElement)videoElement.playbackRate=Math.max(.25,Math.min(v,4));},[videoElement]);
  const toggleLoop=useCallback(()=>{if(videoElement){videoElement.loop=!videoElement.loop;setIsLooping(videoElement.loop);}},[videoElement]);
  const dismissError=useCallback(()=>{setError('');setStatus(filename?'ready':'idle');},[filename]);
- return{videoElement,isPlaying,progress,duration,volume,isMuted,playbackRate,isLooping,filename,status,error,loadFile,togglePlay,seek,changeVolume,toggleMute,changePlaybackRate,toggleLoop,dismissError};
+ return{videoElement,isPlaying,progress,duration,volume,isMuted,playbackRate,isLooping,filename,status,error,youtubeId,loadFile,loadUrl,togglePlay,seek,changeVolume,toggleMute,changePlaybackRate,toggleLoop,dismissError};
 }
