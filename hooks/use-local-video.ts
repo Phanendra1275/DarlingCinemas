@@ -35,14 +35,6 @@ export function useLocalVideo(){
    if(token===generation.current){setError('Screen sharing was cancelled or denied.');setStatus('error');}
   }
  },[videoElement,clearMedia]);
- const initialLoadDone=useRef(false);
- useEffect(()=>{
-  if(videoElement && !initialLoadDone.current){
-   initialLoadDone.current=true;
-   loadUrl('/ad-banner.mp4');
-   setTimeout(() => { if (videoElement) { videoElement.muted = true; videoElement.loop = true; videoElement.play().catch(()=>{}); } }, 500);
-  }
- },[videoElement, loadUrl]);
 
  const loadUrl=useCallback(async(url:string)=>{
   if(!videoElement)return;
@@ -79,6 +71,15 @@ export function useLocalVideo(){
   candidate.src=resolvedUrl;
   candidate.load();
  },[videoElement,clearMedia]);
+
+ const initialLoadDone=useRef(false);
+ useEffect(()=>{
+  if(videoElement && !initialLoadDone.current){
+   initialLoadDone.current=true;
+   loadUrl('/ad-banner.mp4');
+   setTimeout(() => { if (videoElement) { videoElement.muted = true; videoElement.loop = true; videoElement.play().catch(()=>{}); } }, 500);
+  }
+ },[videoElement, loadUrl]);
 
  const togglePlay=useCallback(()=>{if(!videoElement?.src&&!videoElement?.srcObject)return;if(videoElement.paused)void videoElement.play().catch(()=>{setError('Playback could not start. Tap play again or choose a supported video.');setStatus('error');});else videoElement.pause();},[videoElement]);
  const seek=useCallback((v:number)=>{if(videoElement&&Number.isFinite(videoElement.duration))videoElement.currentTime=Math.max(0,Math.min(v,videoElement.duration));},[videoElement]);
