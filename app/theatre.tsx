@@ -25,21 +25,37 @@ export default function Theatre(props:TheatreProps){
   nameSprite.visible=false; // Only visible to other users
   avatar.root.add(nameSprite);
   let lastName='';
- const camera=new T.PerspectiveCamera(64,1,.08,60);camera.position.set(6.85,4.5,8.8);
+  const camera=new T.PerspectiveCamera(64,1,.08,60);camera.position.set(6.85,4.5,8.8);
+  const listener=new T.AudioListener();camera.add(listener);
+  const speakers: { audio: T.PositionalAudio, role: string }[] = [];
+  const createSpeaker = (x:number, y:number, z:number, refD:number, roll:number, cone?:[number,number,number], role:string='main') => {
+      const audio = new T.PositionalAudio(listener);
+      audio.setRefDistance(refD);
+      audio.setRolloffFactor(roll);
+      audio.setDistanceModel('exponential');
+      if (cone) audio.setDirectionalCone(cone[0], cone[1], cone[2]);
+      audio.position.set(x, y, z);
+      scene.add(audio);
+      speakers.push({audio, role});
+  };
+  createSpeaker(0, 2, 0, 12, 1, [180, 230, 0.1], 'center'); // Main Center (Clear)
+  createSpeaker(-6.5, 3, 12, 8, 2, undefined, 'surround'); // Surround Left
+  createSpeaker(6.5, 3, 12, 8, 2, undefined, 'surround'); // Surround Right
+  createSpeaker(0, 0.1, 1, 15, 0.8, undefined, 'lfe'); // Subwoofer
  const player=new T.Vector3(6.45,.32,5.9),velocity=new T.Vector2(),desired=new T.Vector3(),focus=new T.Vector3(),direction=new T.Vector3(),orbitRay=new T.Raycaster();
  let overview=true,yaw=0,pitch=defaultCamera.pitch,distance=defaultCamera.distance,lastSeat:string|null=null,lastNearby:string|null=null,lastReset=props.reset,lastWalk=props.walk,lastDpr=0,lastFov=0,elapsed=0;
  let pointer:number|null=null,px=0,py=0,dragged=false;const keys=new Set<string>();
- let video:HTMLVideoElement|null=null,texture:T.VideoTexture|null=null;const videoMaterial=new T.MeshBasicMaterial({toneMapped:false});const videoMesh=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),videoMaterial);videoMesh.position.z=.012;videoMesh.visible=false;room.screen.add(videoMesh);
+  let video:HTMLVideoElement|null=null,texture:T.VideoTexture|null=null;const videoMaterial=new T.MeshBasicMaterial({toneMapped:false});const videoMesh=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),videoMaterial);videoMesh.position.z=.012;videoMesh.visible=false;room.screen.add(videoMesh);
   if(typeof window!=='undefined'&&!(window as any).CINEMA_LIGHTS_CONFIG){(window as any).CINEMA_LIGHTS_CONFIG={samplingFPS:6,blendWithWhite:.15,minLuminance:.02,intensityMul:30,attack:6.0,release:2.5};}
   const sample=document.createElement('canvas');sample.width=24;sample.height=14;const context=sample.getContext('2d',{willReadFrequently:true});let sampled=0,sampleFailed=false;let previousMap:T.Texture|null=room.welcome;
   const tL=new T.Color('#000'),tC=new T.Color('#000'),tR=new T.Color('#000');let iL=0,iC=0,iR=0;
  let route:T.Vector3[]=[];let destinationRequest=0;let routeSeat:string|null=null;let lastService=0,serviceStarted=0;const server=createAvatar('#e0d6c0');server.root.visible=false;scene.add(server.root);const snacks=createSnacks();snacks.visible=false;scene.add(snacks);
  const startWalk=()=>{if(overview){overview=false;latest.current.onWalk?.();}};
  function blocked(x:number,z:number){return (z>14.1&&x>-2.5&&x<4.6)||(z>9.7&&z<10.3&&x<5.6)||seats.some(s=>Math.abs(x-s.position.x)<1.19&&z>s.position.z-1.55&&z<s.position.z+1.17);}
- const down=(e:PointerEvent)=>{if(latest.current.blocked||pointer!==null)return;pointer=e.pointerId;px=e.clientX;py=e.clientY;dragged=false;renderer.domElement.setPointerCapture(pointer);};
+  const down=(e:PointerEvent)=>{if(listener.context.state==='suspended')listener.context.resume();if(latest.current.blocked||pointer!==null)return;pointer=e.pointerId;px=e.clientX;py=e.clientY;dragged=false;renderer.domElement.setPointerCapture(pointer);};
  const move=(e:PointerEvent)=>{if(pointer!==e.pointerId)return;const dx=e.clientX-px,dy=e.clientY-py;dragged=dragged||Math.abs(dx)+Math.abs(dy)>3;if(dragged){startWalk();const cfg=latest.current.cameraSettings??defaultCamera;yaw-=dx*cfg.sensitivity;pitch=T.MathUtils.clamp(pitch+dy*cfg.sensitivity,-.25,.7);}px=e.clientX;py=e.clientY;};
  const up=(e:PointerEvent)=>{if(pointer!==e.pointerId)return;pointer=null;if(renderer.domElement.hasPointerCapture(e.pointerId))renderer.domElement.releasePointerCapture(e.pointerId);if(!dragged&&!latest.current.seat&&lastNearby){const bounds=renderer.domElement.getBoundingClientRect();const ray=new T.Raycaster();ray.setFromCamera(new T.Vector2((e.clientX-bounds.left)/bounds.width*2-1,-(e.clientY-bounds.top)/bounds.height*2+1),camera);const hit=ray.intersectObjects(room.chairs,true)[0];if(hit){let item:T.Object3D|null=hit.object;while(item&&!item.userData.seat)item=item.parent;if(item?.userData.seat===lastNearby)latest.current.onSeat?.(lastNearby);}}};
- const keydown=(e:KeyboardEvent)=>{if(latest.current.blocked||(e.target as HTMLElement).closest('input,textarea,select,button,[role="dialog"]'))return;const k=e.key.toLowerCase();if(['w','a','s','d'].includes(k)){e.preventDefault();keys.add(k);if(!latest.current.seat)startWalk();}};
+ const keydown=(e:KeyboardEvent)=>{if(listener.context.state==='suspended')listener.context.resume();if(latest.current.blocked||(e.target as HTMLElement).closest('input,textarea,select,button,[role="dialog"]'))return;const k=e.key.toLowerCase();if(['w','a','s','d'].includes(k)){e.preventDefault();keys.add(k);if(!latest.current.seat)startWalk();}};
  const keyup=(e:KeyboardEvent)=>keys.delete(e.key.toLowerCase());const blur=()=>{keys.clear();velocity.set(0,0);};
  const wheel=(e:WheelEvent)=>{if(latest.current.blocked)return;e.preventDefault();distance=T.MathUtils.clamp(distance+e.deltaY*.004,1.8,6);};
  renderer.domElement.addEventListener('pointerdown',down);renderer.domElement.addEventListener('pointermove',move);renderer.domElement.addEventListener('pointerup',up);renderer.domElement.addEventListener('pointercancel',up);renderer.domElement.addEventListener('wheel',wheel,{passive:false});window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);
@@ -69,9 +85,41 @@ export default function Theatre(props:TheatreProps){
    if(overview){desired.set(cfg.heroX,cfg.heroY,cfg.heroZ);focus.set(cfg.targetX,cfg.targetY,cfg.targetZ);}else{focus.copy(player);focus.y+=cfg.targetHeight;desired.copy(focus);desired.x+=Math.sin(yaw)*distance+Math.cos(yaw)*cfg.sideOffset;desired.z+=Math.cos(yaw)*distance-Math.sin(yaw)*cfg.sideOffset;desired.y+=cfg.height+Math.sin(pitch)*distance;direction.copy(desired).sub(focus);const max=direction.length();orbitRay.set(focus,direction.normalize());orbitRay.far=max;const hits=orbitRay.intersectObjects([...room.collision,...room.chairs],true);if(hits.length&&hits[0].distance<max)desired.copy(focus).addScaledVector(direction,Math.max(.35,hits[0].distance-cfg.collisionDistance));desired.y=Math.max(floorHeight(desired.z,desired.x)+.5,Math.min(desired.y,5.25));}
   }
   camera.position.lerp(desired,blend);camera.lookAt(focus);
-  if(p.video!==video){texture?.dispose();video=p.video??null;texture=video?new T.VideoTexture(video):null;if(texture){texture.colorSpace=T.SRGBColorSpace;texture.minFilter=T.LinearFilter;texture.magFilter=T.LinearFilter;}videoMaterial.map=texture;videoMaterial.needsUpdate=true;sampleFailed=false;}
+  if(p.video!==video){
+   texture?.dispose();video=p.video??null;texture=video?new T.VideoTexture(video):null;
+   if(texture){texture.colorSpace=T.SRGBColorSpace;texture.minFilter=T.LinearFilter;texture.magFilter=T.LinearFilter;}
+   videoMaterial.map=texture;videoMaterial.needsUpdate=true;sampleFailed=false;
+    if(video){
+     if(!(video as any)._spatialSource){
+      try{
+       const ctx=listener.context;
+       const src=ctx.createMediaElementSource(video);
+       (video as any)._spatialSource=src;
+       const clarityEQ=ctx.createBiquadFilter();clarityEQ.type='highshelf';clarityEQ.frequency.value=3000;clarityEQ.gain.value=4;
+       const surroundDelay=ctx.createDelay();surroundDelay.delayTime.value=0.035;
+       const surroundFilter=ctx.createBiquadFilter();surroundFilter.type='highpass';surroundFilter.frequency.value=400;
+       const surroundGain=ctx.createGain();surroundGain.gain.value=0.25;
+       const lfeFilter=ctx.createBiquadFilter();lfeFilter.type='lowpass';lfeFilter.frequency.value=120;
+       const lfeGain=ctx.createGain();lfeGain.gain.value=0.6;
+       src.connect(clarityEQ);
+       src.connect(surroundDelay);surroundDelay.connect(surroundFilter);surroundFilter.connect(surroundGain);
+       src.connect(lfeFilter);lfeFilter.connect(lfeGain);
+       (video as any)._audioNodes={center:clarityEQ,surround:surroundGain,lfe:lfeGain};
+      }catch(e){console.warn('Spatial audio error:',e);}
+     }
+     const nodes=(video as any)._audioNodes;
+     if(nodes){
+      speakers.forEach(s=>{
+       try{s.audio.disconnect();}catch{}
+       if(s.role==='surround')s.audio.setNodeSource(nodes.surround);
+       else if(s.role==='lfe')s.audio.setNodeSource(nodes.lfe);
+       else s.audio.setNodeSource(nodes.center);
+      });
+     }
+    }
+  }
   const lightCfg=(window as any).CINEMA_LIGHTS_CONFIG||{samplingFPS:6,blendWithWhite:.15,minLuminance:.02,intensityMul:30,attack:6.0,release:2.5};
-  const ready=!!video&&video.readyState>=2&&video.videoWidth>0;videoMesh.visible=ready;if(ready&&video){const ratio=video.videoWidth/video.videoHeight,screenRatio=SCREEN.width/SCREEN.height;videoMesh.scale.set(ratio<screenRatio?ratio/screenRatio:1,ratio>screenRatio?screenRatio/ratio:1,1);(room.screen.material as T.MeshBasicMaterial).map=null;(room.screen.material as T.MeshBasicMaterial).color.set('#000');if(context&&!sampleFailed&&t-sampled>1000/lightCfg.samplingFPS){sampled=t;try{context.drawImage(video,0,0,24,14);const data=context.getImageData(0,0,24,14).data;
+  const ready=!!video&&video.readyState>=2&&video.videoWidth>0;videoMesh.visible=ready;room.projectorBeam.visible=(ready&&!video!.paused);if(ready&&video){const ratio=video.videoWidth/video.videoHeight,screenRatio=SCREEN.width/SCREEN.height;videoMesh.scale.set(ratio<screenRatio?ratio/screenRatio:1,ratio>screenRatio?screenRatio/ratio:1,1);(room.screen.material as T.MeshBasicMaterial).map=null;(room.screen.material as T.MeshBasicMaterial).color.set('#000');if(context&&!sampleFailed&&t-sampled>1000/lightCfg.samplingFPS){sampled=t;try{context.drawImage(video,0,0,24,14);const data=context.getImageData(0,0,24,14).data;
    let rL=0,gL=0,bL=0,cL=0, rC=0,gC=0,bC=0,cC=0, rR=0,gR=0,bR=0,cR=0;
    for(let y=0;y<14;y++){for(let x=0;x<24;x++){const i=(y*24+x)*4, r=data[i],g=data[i+1],b=data[i+2], lum=(0.299*r+0.587*g+0.114*b)/255;
     if(lum<lightCfg.minLuminance)continue; const w=0.1+lum;
