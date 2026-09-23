@@ -22,13 +22,14 @@ export function useWatchParty(media: any, userName: string) {
   const mediaRef = useRef(media);
   useEffect(() => { mediaRef.current = media; }, [media]);
 
+  const assignedName = useRef(userName);
   const pcs = useRef<Map<string, RTCPeerConnection>>(new Map());
 
   const sendSignal = async (to: string, data: any) => {
     if (!partyCode) return;
     await fetch('/api/party', {
       method: 'POST',
-      body: JSON.stringify({ action: 'signal', code: partyCode, guestName: userName, to, data })
+      body: JSON.stringify({ action: 'signal', code: partyCode, guestName: assignedName.current, to, data })
     }).catch(() => {});
   };
 
@@ -67,6 +68,7 @@ export function useWatchParty(media: any, userName: string) {
       if (data.code) {
         setPartyCode(data.code);
         setIsHost(true);
+        assignedName.current = userName;
         setHostName(userName);
         setGuests([]);
         setError(null);
@@ -87,6 +89,7 @@ export function useWatchParty(media: any, userName: string) {
         const data = await res.json();
         setPartyCode(code);
         setIsHost(false);
+        assignedName.current = data.assignedName || userName;
         setHostName(data.host);
         setGuests(data.guests);
         setError(null);
@@ -104,7 +107,7 @@ export function useWatchParty(media: any, userName: string) {
     if (partyCode) {
       await fetch('/api/party', {
         method: 'POST',
-        body: JSON.stringify({ action: 'leave', code: partyCode, guestName: userName }),
+        body: JSON.stringify({ action: 'leave', code: partyCode, guestName: assignedName.current }),
       }).catch(() => {});
     }
     setPartyCode(null);
@@ -168,8 +171,8 @@ export function useWatchParty(media: any, userName: string) {
     const video = m?.videoElement as any;
     if (!video) return;
 
-    // We stream local files or screen share
-    const shouldStream = m.filename && (m.filename.startsWith('blob:') || m.filename === 'Screen Share' || m.filename.startsWith('local:'));
+    // We stream local files or screen share (anything that isn't a direct http link)
+    const shouldStream = m.filename && !m.filename.startsWith('http');
     
     if (shouldStream) {
       const getStream = () => {
@@ -219,14 +222,14 @@ export function useWatchParty(media: any, userName: string) {
               }
             })
           });
-          const res = await fetch(`/api/party?code=${partyCode}&user=${userName}`);
+          const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
           if (res.ok) {
             const data = await res.json();
             setGuests(data.guests);
             processSignals(data.signals);
           }
         } else {
-          const res = await fetch(`/api/party?code=${partyCode}&user=${userName}`);
+          const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
           if (res.ok) {
             const data = await res.json();
             setHostName(data.host);

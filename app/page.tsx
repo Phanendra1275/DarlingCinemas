@@ -110,9 +110,9 @@ export default function Home(){
         <div style={{flex:1, minWidth:'220px', background:'rgba(255,255,255,0.03)', padding:'24px', borderRadius:'8px'}}>
           <h3 style={{marginBottom:'8px'}}>Join a Party</h3>
           <p style={{fontSize:'13px', opacity:0.7, marginBottom:'24px', minHeight:'38px'}}>Enter a 6-digit code to join a friend.</p>
-          <div style={{display:'flex', gap:'8px'}}>
-            <input type="text" maxLength={6} placeholder="000000" value={partyJoinCode} onChange={e=>setPartyJoinCode(e.target.value.replace(/\D/g, ''))} style={{flex:1, padding:'12px', background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.1)', color:'white', borderRadius:'4px', textAlign:'center', letterSpacing:'4px', fontSize:'18px'}} />
-            <button className="dc-pill" style={{padding:'0 16px', background:'white', color:'black', borderRadius:'4px', fontWeight:600}} disabled={partyJoinCode.length!==6} onClick={()=>watchParty.joinParty(partyJoinCode)}>Join</button>
+          <div style={{display:'flex', flexDirection: 'column', gap:'12px'}}>
+            <input type="text" maxLength={6} placeholder="000000" value={partyJoinCode} onChange={e=>setPartyJoinCode(e.target.value.replace(/\D/g, ''))} style={{width: '100%', boxSizing: 'border-box', padding:'12px', background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.1)', color:'white', borderRadius:'4px', textAlign:'center', letterSpacing:'8px', fontSize:'24px'}} />
+            <button className="dc-wide" disabled={partyJoinCode.length!==6} onClick={()=>watchParty.joinParty(partyJoinCode)}>Join room →</button>
           </div>
         </div>
       </div>

@@ -71,11 +71,15 @@ export async function POST(req: Request) {
     const room = rooms.get(code)!;
 
     if (action === 'join') {
-      const name = guestName || 'Guest';
-      if (!room.guests.includes(name) && room.host !== name) {
-        room.guests.push(name);
+      let finalName = guestName || 'Guest';
+      while (room.host === finalName || room.guests.includes(finalName)) {
+        finalName = `${guestName} ${Math.floor(Math.random() * 1000)}`;
       }
-      return NextResponse.json(room);
+      
+      if (!room.guests.includes(finalName)) {
+        room.guests.push(finalName);
+      }
+      return NextResponse.json({ ...room, assignedName: finalName });
     }
     
     if (action === 'update') {
