@@ -24,6 +24,7 @@ export function useWatchParty(media: any, userName: string) {
 
   const assignedName = useRef(userName);
   const pcs = useRef<Map<string, RTCPeerConnection>>(new Map());
+  const candidateQueue = useRef<Map<string, any[]>>(new Map());
 
   const sendSignal = async (to: string, data: any) => {
     if (!partyCode) return;
@@ -73,6 +74,7 @@ export function useWatchParty(media: any, userName: string) {
         setGuests([]);
         setError(null);
         pcs.current.clear();
+        candidateQueue.current.clear();
       }
     } catch (err) {
       setError('Failed to create party.');
@@ -94,6 +96,7 @@ export function useWatchParty(media: any, userName: string) {
         setGuests(data.guests);
         setError(null);
         pcs.current.clear();
+        candidateQueue.current.clear();
         syncMediaToState(data);
       } else {
         setError('Room not found or could not join.');
@@ -114,6 +117,7 @@ export function useWatchParty(media: any, userName: string) {
     setIsHost(false);
     pcs.current.forEach(pc => pc.close());
     pcs.current.clear();
+    candidateQueue.current.clear();
   };
 
   const processSignals = async (signals: any[]) => {
@@ -128,13 +132,33 @@ export function useWatchParty(media: any, userName: string) {
       if (data.offer) {
         if (!pc) pc = createPeerConnection(peer);
         await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        
+        // Drain any queued ICE candidates that arrived before the offer
+        const q = candidateQueue.current.get(peer) || [];
+        for (const c of q) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{});
+        candidateQueue.current.set(peer, []);
+        
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         sendSignal(peer, { answer });
       } else if (data.answer) {
-        if (pc) await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+        if (pc) {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          
+          // Drain any queued ICE candidates that arrived before the answer
+          const q = candidateQueue.current.get(peer) || [];
+          for (const c of q) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{});
+          candidateQueue.current.set(peer, []);
+        }
       } else if (data.candidate) {
-        if (pc) await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        if (pc && pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(()=>{});
+        } else {
+          // Store candidates if remote description is not set yet due to network race conditions
+          const q = candidateQueue.current.get(peer) || [];
+          q.push(data.candidate);
+          candidateQueue.current.set(peer, q);
+        }
       }
     }
   };
