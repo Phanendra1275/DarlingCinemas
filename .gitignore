@@ -48,3 +48,5 @@ next-env.d.ts
 00_REFERENCE/
 
 reference/
+
+*.tsbuildinfo

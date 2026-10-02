@@ -48,7 +48,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { action, code, state, guestName } = body;
+    const { action, code, state, guestName } = body as any;
     
     if (action === 'create') {
       const newCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -92,7 +92,7 @@ export async function POST(req: Request) {
     }
     
     if (action === 'signal') {
-      const { to, data } = body;
+      const { to, data } = body as any;
       room.signals.push({ to, from: guestName, data });
       return NextResponse.json({ success: true });
     }

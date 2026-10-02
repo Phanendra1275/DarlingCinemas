@@ -178,23 +178,9 @@ export function buildCinema(scene:T.Scene){
   const waiter1=createAvatar('#3b3530');waiter1.root.position.set(-0.5,loungeFloor,15.6);waiter1.root.rotation.y=Math.PI;scene.add(waiter1.root);
   const waiter2=createAvatar('#3b3530');waiter2.root.position.set(2.5,loungeFloor,15.6);waiter2.root.rotation.y=Math.PI;scene.add(waiter2.root);
   
-  // Projector & Volumetric Beam
-  const projectorGroup=new T.Group();projectorGroup.position.set(0,4.5,9.8);scene.add(projectorGroup);
-  box(projectorGroup,.8,.35,1.2,0,0,0,trim,.05);
-  const lensMat=new T.MeshStandardMaterial({color:'#111',roughness:.1,metalness:.8});materials.push(lensMat);
-  const lens=new T.Mesh(new T.CylinderGeometry(.15,.15,.2,32),lensMat);lens.rotation.x=Math.PI/2;lens.position.set(0,0,-.6);projectorGroup.add(lens);
-  box(projectorGroup,.15,.8,.15,0,.4,0,base);
-  
-  const pLensZ = 9.2, pLensY = 4.5, pScreenZ = -4.85, pScreenY = 3.0;
-  const beamDist = Math.hypot(pLensZ - pScreenZ, pLensY - pScreenY);
-  const beamGeo = new T.CylinderGeometry(SCREEN.width/2.1, .06, beamDist, 32, 1, true);
-  beamGeo.rotateX(Math.PI/2); // Top (+Y) becomes +Z.
-  const beamMat = new T.MeshBasicMaterial({color:'#ffffff',transparent:true,opacity:0.02,blending:T.AdditiveBlending,depthWrite:false,side:T.DoubleSide});
-  materials.push(beamMat);
-  const projectorBeam=new T.Mesh(beamGeo,beamMat);
-  projectorBeam.position.set(0,(pLensY+pScreenY)/2,(pLensZ+pScreenZ)/2);
-  projectorBeam.lookAt(0,pScreenY,pScreenZ);
-  scene.add(projectorBeam);
+  // Projector & Volumetric Beam removed per request
+  const projectorBeam=new T.Mesh();
+  projectorBeam.visible = false;
 
   return{screen,welcome,chairs,collision,hemi,key,lamps,leftSpill,centerSpill,rightSpill,glow,projectorBeam};
 }

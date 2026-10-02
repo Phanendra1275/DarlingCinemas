@@ -65,7 +65,7 @@ export function useWatchParty(media: any, userName: string) {
         method: 'POST',
         body: JSON.stringify({ action: 'create', guestName: userName }),
       });
-      const data = await res.json();
+      const data = await res.json() as any;
       if (data.code) {
         setPartyCode(data.code);
         setIsHost(true);
@@ -88,7 +88,7 @@ export function useWatchParty(media: any, userName: string) {
         body: JSON.stringify({ action: 'join', code, guestName: userName }),
       });
       if (res.ok) {
-        const data = await res.json();
+        const data = await res.json() as any;
         setPartyCode(code);
         setIsHost(false);
         assignedName.current = data.assignedName || userName;
@@ -248,14 +248,14 @@ export function useWatchParty(media: any, userName: string) {
           });
           const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
           if (res.ok) {
-            const data = await res.json();
+            const data = await res.json() as any;
             setGuests(data.guests);
             processSignals(data.signals);
           }
         } else {
           const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
           if (res.ok) {
-            const data = await res.json();
+            const data = await res.json() as any;
             setHostName(data.host);
             setGuests(data.guests);
             setHostVideoUrl(data.videoUrl || '');
