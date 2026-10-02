@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 
-export async function GET(req: NextRequest, { params }: { params: { fileId: string } }) {
-  const fileId = params.fileId;
+export async function GET(req: NextRequest, { params }: { params: Promise<{ fileId: string }> }) {
+  const { fileId } = await params;
   const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
   let url = apiKey 
     ? `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${apiKey}`
@@ -124,6 +124,6 @@ export async function GET(req: NextRequest, { params }: { params: { fileId: stri
   }
 }
 
-export async function HEAD(req: NextRequest, ctx: { params: { fileId: string } }) {
+export async function HEAD(req: NextRequest, ctx: { params: Promise<{ fileId: string }> }) {
   return GET(req, ctx);
 }
