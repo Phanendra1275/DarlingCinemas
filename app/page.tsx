@@ -171,17 +171,16 @@ export default function Home(){
                 <button
                   type="button"
                   onClick={() => setNotice("Beta version coming later. You will be notified soon!")}
-                  className="dc-btn-primary"
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                  className="dc-btn-download"
                 >
-                   <svg className="dc-icon" viewBox="0 0 24 24" fill="currentColor" style={{width: '18px', height: '18px'}}><path d="M2.5 11V5l8-1v7H2.5zm9 0V3.5l10-1.5V11h-10zm-9 1v6l8 1v-7H2.5zm9 0v7l10 1.5V12h-10z"/></svg>
+                   <svg className="dc-icon" viewBox="0 0 24 24" fill="currentColor" style={{width: '18px', height: '18px', color: '#ffcd33'}}><path d="M2.5 11V5l8-1v7H2.5zm9 0V3.5l10-1.5V11h-10zm-9 1v6l8 1v-7H2.5zm9 0v7l10 1.5V12h-10z"/></svg>
                    <span>Download for Windows</span>
-                   <span style={{ fontSize: '10px', background: 'rgba(0,0,0,0.3)', padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 700 }}>Coming Soon</span>
+                   <span className="dc-btn-soon-badge">Coming Soon</span>
                 </button>
               )}
-              <button onClick={enterFromLanding} className={isDesktopApp ? "dc-btn-primary" : "dc-btn-secondary"}>
-                 <svg className="dc-icon play-icon" viewBox="0 0 24 24" fill="currentColor" style={{marginRight: '8px', width: '18px', height: '18px', color: isDesktopApp ? '#fff' : '#ff6633'}}><path d="M8 5v14l11-7z"/></svg>
-                 Enter Screen
+              <button onClick={enterFromLanding} className="dc-btn-enter">
+                 <svg className="dc-icon play-icon" viewBox="0 0 24 24" fill="currentColor" style={{width: '18px', height: '18px', color: '#ffffff'}}><path d="M8 5v14l11-7z"/></svg>
+                 <span>Enter Screen</span>
               </button>
             </div>
           ) : (
