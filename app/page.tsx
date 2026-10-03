@@ -140,8 +140,8 @@ export default function Home(){
    <div className="dc-panel-footer">DARLING CINEMAS · THE PRIVATE CINEMA</div>
   </div></div>}
   {dev&&<details className="dc-debug"><summary>Camera tuning</summary><button onClick={()=>{stand();setRoute({id:"CANTEEN",request:Date.now()});}}>Walk to canteen (QA)</button><button onClick={()=>{setCamera(REFERENCE_GEOMETRY_VIEW);}}>Load Reference Camera</button><button onClick={async()=>{const response=await fetch("/qa/cinema-qa.mp4");load(new File([await response.blob()],"Generated QA clip.mp4",{type:"video/mp4"}));}}>Load generated QA clip</button>{Object.entries(camera).map(([key,value])=><label key={key}>{key}<input type="number" step={key==='sensitivity'?'.001':'.1'} value={value} onChange={e=>setCamera({...camera,[key]:+e.target.value})}/></label>)}</details>}
-  {appState !== 'EXPLORING' && <div className="dc-backdrop" style={{zIndex:100, transition: 'opacity 1.5s ease', opacity: appState==='THEATRE_LOADING'?0:1, backgroundColor: appState==='INTRO'||appState==='LANDING'||appState==='LOADING'?'transparent':'#14120f', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-    <div className={appState === 'INTRO' || appState === 'LANDING' || appState === 'LOADING' ? "dc-landing-container" : "dc-panel"} style={{margin:'auto'}}>
+  {appState !== 'EXPLORING' && <div className="dc-backdrop" style={{zIndex:100, transition: 'opacity 1.5s ease', opacity: appState==='THEATRE_LOADING'?0:1, backgroundColor: appState==='INTRO'||appState==='LANDING'||appState==='LOADING'||appState==='RETURNING_USER'?'transparent':'#14120f', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+    <div className={appState === 'INTRO' || appState === 'LANDING' || appState === 'LOADING' || appState === 'RETURNING_USER' ? "dc-landing-container" : "dc-panel"} style={{margin:'auto'}}>
 
       {/* INTRO: exact image full-screen, no fade, with loading bar */}
       {appState === 'INTRO' && (
@@ -221,9 +221,25 @@ export default function Home(){
         </>
       )}
       {appState === 'RETURNING_USER' && (
-        <div style={{display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', minHeight:'300px'}}>
-          <span className="dc-eyebrow" style={{textAlign:'center', display:'block', marginBottom: '16px'}}>DARLING CINEMAS</span>
-          <h2 style={{margin:0, opacity: 1}}>WELCOME BACK, {name.toUpperCase()}</h2>
+        <div className="dc-intro-fullscreen" style={{ animation: 'fadeIn 0.6s ease-out' }}>
+          <img src="/Application intro.jpeg" alt="Darling Cinemas" className="dc-intro-image" />
+          <div className="dc-welcome-overlay">
+            <span className="dc-eyebrow" style={{ letterSpacing: '4px', color: '#ffcd33', fontSize: '13px', textTransform: 'uppercase', marginBottom: '8px' }}>
+              DARLING CINEMAS
+            </span>
+            <h1 className="dc-welcome-title">
+              WELCOME BACK,<br/>
+              <span className="dc-welcome-name">{name && name !== 'Guest' ? name.toUpperCase() : 'DARLINGS'}</span>
+            </h1>
+            <p style={{ letterSpacing: '3px', fontSize: '12px', color: 'rgba(255,255,255,0.75)', margin: '14px 0 24px', textTransform: 'uppercase', fontWeight: 500 }}>
+              PREPARING YOUR PRIVATE SCREEN
+            </p>
+            <div className="dc-intro-bar-wrap" style={{ position: 'relative', bottom: 'auto', left: 'auto', transform: 'none', width: '280px' }}>
+              <div className="dc-intro-bar-track">
+                <div className="dc-intro-bar-fill" style={{ animation: 'introLoad 2.2s cubic-bezier(0.4,0,0.2,1) forwards' }}></div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
       {(appState === 'BOOT' || appState === 'RESTORING_PROFILE') && (
