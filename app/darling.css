@@ -121,3 +121,130 @@
   display:inline-block;
   padding: 0 4px;
 }
+
+/* Minimalist Welcome Back Screen Animation & Typography */
+.dc-welcome-container{
+  position:fixed;
+  inset:0;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  background:radial-gradient(ellipse at center, rgba(28,16,12,0.88) 0%, rgba(5,4,4,0.97) 100%);
+  backdrop-filter:blur(30px) saturate(190%);
+  -webkit-backdrop-filter:blur(30px) saturate(190%);
+  z-index:250;
+  animation:welcomeBackFadeIn 0.8s cubic-bezier(0.16,1,0.3,1) both;
+}
+
+.dc-welcome-card{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  text-align:center;
+  padding:48px 52px;
+  max-width:480px;
+  width:90%;
+  border-radius:28px;
+  background:linear-gradient(145deg, rgba(255,255,255,0.06) 0%, rgba(255,100,40,0.04) 100%);
+  border:1px solid rgba(255,255,255,0.12);
+  box-shadow:0 30px 80px rgba(0,0,0,0.65), 0 0 50px rgba(255,100,40,0.1), inset 0 1px 1px rgba(255,255,255,0.3);
+  backdrop-filter:blur(24px);
+  -webkit-backdrop-filter:blur(24px);
+  animation:welcomeCardPop 0.9s cubic-bezier(0.16,1,0.3,1) both;
+}
+
+.dc-welcome-tag{
+  font-size:11px;
+  letter-spacing:6px;
+  font-weight:600;
+  text-transform:uppercase;
+  color:#ffcd33;
+  opacity:0.9;
+  margin-bottom:18px;
+  text-indent:6px;
+  animation:welcomeItemFade 0.8s ease-out 0.15s both;
+}
+
+.dc-welcome-heading{
+  font-family:'Montserrat', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size:clamp(26px, 4vw, 36px);
+  font-weight:800;
+  line-height:1.2;
+  letter-spacing:1px;
+  color:#ffffff;
+  margin:0 0 12px 0;
+  animation:welcomeItemFade 0.8s ease-out 0.3s both;
+}
+
+.dc-welcome-name-highlight{
+  display:block;
+  background:linear-gradient(135deg, #ffffff 0%, #ffebd2 40%, #f69d3c 80%, #ff521b 100%);
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+  font-weight:900;
+  letter-spacing:2px;
+  margin-top:6px;
+}
+
+.dc-welcome-desc{
+  font-size:11.5px;
+  line-height:1.6;
+  letter-spacing:3.5px;
+  text-transform:uppercase;
+  color:rgba(255,255,255,0.65);
+  margin:10px 0 26px 0;
+  font-weight:400;
+  text-indent:3.5px;
+  animation:welcomeItemFade 0.8s ease-out 0.45s both;
+}
+
+.dc-welcome-progress{
+  width:100%;
+  max-width:240px;
+  height:3px;
+  background:rgba(255,255,255,0.08);
+  border-radius:6px;
+  overflow:hidden;
+  position:relative;
+  animation:welcomeItemFade 0.8s ease-out 0.6s both;
+}
+
+.dc-welcome-progress-bar{
+  height:100%;
+  border-radius:6px;
+  background:linear-gradient(90deg, #ff521b 0%, #ff7a33 50%, #ffcd33 100%);
+  box-shadow:0 0 14px rgba(255,100,40,0.7);
+  animation:welcomeBarFill 2.2s cubic-bezier(0.4,0,0.2,1) forwards;
+}
+
+.dc-welcome-substatus{
+  font-size:9.5px;
+  letter-spacing:2px;
+  color:rgba(255,255,255,0.4);
+  text-transform:uppercase;
+  margin-top:14px;
+  animation:welcomeItemFade 0.8s ease-out 0.75s both;
+}
+
+@keyframes welcomeBackFadeIn{
+  from{opacity:0;}
+  to{opacity:1;}
+}
+
+@keyframes welcomeCardPop{
+  from{opacity:0;transform:translateY(24px) scale(0.96);filter:blur(8px);}
+  to{opacity:1;transform:translateY(0) scale(1);filter:blur(0);}
+}
+
+@keyframes welcomeItemFade{
+  from{opacity:0;transform:translateY(12px);}
+  to{opacity:1;transform:translateY(0);}
+}
+
+@keyframes welcomeBarFill{
+  0%{width:0%;}
+  40%{width:55%;}
+  80%{width:88%;}
+  100%{width:100%;}
+}

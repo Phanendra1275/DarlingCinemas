@@ -49,8 +49,8 @@ export default function Home(){
                   setTimeout(()=>{
                       setAppState('EXPLORING');
                       setWalking(true);setWalk(v=>v+1);
-                  }, 1500);
-              }, 1500);
+                  }, 1200);
+              }, 2200);
           }else{
               setAppState('ONBOARDING');
           }
@@ -221,24 +221,24 @@ export default function Home(){
         </>
       )}
       {appState === 'RETURNING_USER' && (
-        <div className="dc-intro-fullscreen" style={{ animation: 'fadeIn 0.6s ease-out' }}>
-          <img src="/Application intro.jpeg" alt="Darling Cinemas" className="dc-intro-image" />
-          <div className="dc-welcome-overlay">
-            <span className="dc-eyebrow" style={{ letterSpacing: '4px', color: '#ffcd33', fontSize: '13px', textTransform: 'uppercase', marginBottom: '8px' }}>
-              DARLING CINEMAS
-            </span>
-            <h1 className="dc-welcome-title">
-              WELCOME BACK,<br/>
-              <span className="dc-welcome-name">{name && name !== 'Guest' ? name.toUpperCase() : 'DARLINGS'}</span>
+        <div className="dc-welcome-container">
+          <div className="dc-welcome-card">
+            <span className="dc-welcome-tag">D A R L I N G &nbsp; C I N E M A S</span>
+            <h1 className="dc-welcome-heading">
+              WELCOME BACK,
+              <span className="dc-welcome-name-highlight">
+                {name && name !== 'Guest' ? name.toUpperCase() : 'DARLINGS'}
+              </span>
             </h1>
-            <p style={{ letterSpacing: '3px', fontSize: '12px', color: 'rgba(255,255,255,0.75)', margin: '14px 0 24px', textTransform: 'uppercase', fontWeight: 500 }}>
-              PREPARING YOUR PRIVATE SCREEN
+            <p className="dc-welcome-desc">
+              ENTERING YOUR PRIVATE SCREEN
             </p>
-            <div className="dc-intro-bar-wrap" style={{ position: 'relative', bottom: 'auto', left: 'auto', transform: 'none', width: '280px' }}>
-              <div className="dc-intro-bar-track">
-                <div className="dc-intro-bar-fill" style={{ animation: 'introLoad 2.2s cubic-bezier(0.4,0,0.2,1) forwards' }}></div>
-              </div>
+            <div className="dc-welcome-progress">
+              <div className="dc-welcome-progress-bar"></div>
             </div>
+            <span className="dc-welcome-substatus">
+              PREPARING 3D THEATRE &middot; SEAT READY
+            </span>
           </div>
         </div>
       )}
