@@ -70,7 +70,7 @@ export default function Home(){
  return <main className="darling-app cinema-app">
   <header className={`dc-header ${seat&&!showHUD?'dc-hidden':''}`} data-ui-control onPointerEnter={beginInteraction} onPointerLeave={endInteraction}>
    <button className="dc-brand" onClick={resetView} aria-label="Reset to entrance"><span className="dc-brand-icon">D</span><span className="dc-brand-name">DARLING CINEMAS</span></button>
-   <div className="dc-header-right"><button className="dc-icon community" disabled title="Darling Discord is not available" aria-label="Discord unavailable"><MessageSquare/></button><button className="dc-icon community" disabled title="Darling Telegram is not available" aria-label="Telegram unavailable"><Send/></button><button className="dc-pill" onClick={()=>setPanel('party')}><Users size={14}/><span>{watchParty.partyCode ? `Party: ${watchParty.guests.length + 1}` : 'Watch party'}</span></button><button className="dc-profile" aria-label="Customize your player" onClick={()=>setPanel('profile')}>{name.charAt(0).toUpperCase()}</button></div>
+   <div className="dc-header-right"><button className="dc-icon community" disabled title="Darling Discord is not available" aria-label="Discord unavailable"><MessageSquare/></button><button className="dc-icon community" disabled title="Darling Telegram is not available" aria-label="Telegram unavailable"><Send/></button><button className="dc-pill" onClick={()=>setPanel('party')}><Users size={14}/><span>Watch party</span><span style={{ fontSize: '9px', background: 'rgba(255,255,255,0.12)', padding: '2px 6px', borderRadius: '8px', letterSpacing: '0.5px', textTransform: 'uppercase', color: '#ffcd33', marginLeft: '2px', fontWeight: 700 }}>Soon</span></button><button className="dc-profile" aria-label="Customize your player" onClick={()=>setPanel('profile')}>{name.charAt(0).toUpperCase()}</button></div>
   </header>
   <input ref={input} type="file" accept="video/mp4,video/webm,video/quicktime,.mov" className="dc-file" aria-label="Choose local video" onChange={e=>{if(e.target.files?.[0])load(e.target.files[0]);e.currentTarget.value='';}}/>
   <section className="dc-stage">
@@ -109,52 +109,34 @@ export default function Home(){
    {panel==='seats'&&<><p>Ten wide recliners. Not a bad seat in the house.</p><div className="dc-seat-map"><div className="dc-map-screen">SCREEN</div>{['A','B'].map(row=><div className="dc-seat-row" key={row}><span>{row}</span>{seats.filter(s=>s.id.startsWith(row)).map(s=><button key={s.id} aria-label={`Select seat ${s.id}`} aria-pressed={selection===s.id} className={selection===s.id?'selected':''} onClick={()=>setSelection(s.id)}><Armchair/>{s.id}</button>)}</div>)}<small>RAISED PLATFORM · ENTRANCE</small></div><span className="dc-eyebrow">YOUR SPOT</span><h3>Seat {selection}</h3><p>{selection.startsWith('B')?'Raised back row':'Main floor'} · {selection.endsWith('3')?'A perfectly centered view':'A view of your own'}</p><button className="dc-wide" onClick={()=>{stand();setRoute({id:selection,request:Date.now()});close();}}>Settle into {selection} →</button><p>We will walk you there. You can take over at any time.</p></>}
    {panel==='settings'&&<><p>A few thoughtful adjustments. Nothing in the way.</p><span className="dc-eyebrow">RENDER QUALITY · {fps??'—'} FPS</span><div className="dc-quality" role="radiogroup" aria-label="Render quality">{(['Performance','Adaptive','Ultra'] as const).map(q=><button key={q} role="radio" aria-checked={quality===q} onClick={()=>{setQuality(q); darlingStorage.savePreferences({quality: q, reducedMotion: reduced, highRefresh});}}><strong>{q}</strong><span>{q==='Performance'?'Lower pixel ratio and no heavy shadows.':q==='Adaptive'?'Balances clarity and frame rate.':'High pixel ratio and soft shadows for strong GPUs.'}</span></button>)}</div><label className="dc-switch">High refresh target<input type="checkbox" checked={highRefresh} onChange={e=>{setHighRefresh(e.target.checked); darlingStorage.savePreferences({quality, reducedMotion: reduced, highRefresh: e.target.checked});}}/></label><label className="dc-switch">Reduced motion<input type="checkbox" checked={reduced} onChange={e=>{setReduced(e.target.checked); darlingStorage.savePreferences({quality, reducedMotion: e.target.checked, highRefresh});}}/></label><h3>Layout diagnostics</h3><p>{THEATRE_CONFIG.seatGapX.toFixed(2)} m seat gaps. {THEATRE_CONFIG.sideAisleWidth.toFixed(2)} m side aisles. Ten physical seats.</p><button className="dc-wide" onClick={resetView}>Return to the entrance →</button></>}
    {(panel==='experience'||panel==='entry')&&<><p>For the stories that deserve your full attention.</p><div className="dc-landscape"><span>Leave the everyday outside.</span></div><p>Deep burgundy recliners. Warm architectural light. Enough room to breathe. A private cinema with ten places, and every seat is yours to try.</p><p>Choose a video from your device, walk through the theatre, and settle into your own view. Your video remains local.</p><button className="dc-wide" onClick={panel==='entry'?enter:close}>{panel==='entry'?'Enter the cinema':'Back to the cinema'} →</button></>}
-   {panel==='party'&&<><p>One private cinema. Ten places. A shared moment.</p>
-    {watchParty.error && <p className="dc-error" role="alert" style={{color:'#ff6b6b',marginTop:'16px'}}>{watchParty.error}</p>}
-    {!watchParty.partyCode ? (
-      <div className="dc-party-setup" style={{display:'flex', gap:'16px', flexWrap:'wrap', marginTop:'24px'}}>
-        <div style={{flex:1, minWidth:'220px', background:'rgba(255,255,255,0.03)', padding:'24px', borderRadius:'8px'}}>
-          <h3 style={{marginBottom:'8px'}}>Host a Party</h3>
-          <p style={{fontSize:'13px', opacity:0.7, marginBottom:'24px', minHeight:'38px'}}>Create a room and sync your screen.</p>
-          <button className="dc-wide" onClick={watchParty.createParty}>Create room →</button>
-        </div>
-        <div style={{flex:1, minWidth:'220px', background:'rgba(255,255,255,0.03)', padding:'24px', borderRadius:'8px'}}>
-          <h3 style={{marginBottom:'8px'}}>Join a Party</h3>
-          <p style={{fontSize:'13px', opacity:0.7, marginBottom:'24px', minHeight:'38px'}}>Enter a 6-digit code to join a friend.</p>
-          <div style={{display:'flex', flexDirection: 'column', gap:'12px'}}>
-            <input type="text" maxLength={6} placeholder="000000" value={partyJoinCode} onChange={e=>setPartyJoinCode(e.target.value.replace(/\D/g, ''))} style={{width: '100%', boxSizing: 'border-box', padding:'12px', background:'rgba(0,0,0,0.5)', border:'1px solid rgba(255,255,255,0.1)', color:'white', borderRadius:'4px', textAlign:'center', letterSpacing:'8px', fontSize:'24px'}} />
-            <button className="dc-wide" disabled={partyJoinCode.length!==6} onClick={()=>watchParty.joinParty(partyJoinCode)}>Join room →</button>
-          </div>
-        </div>
+   {panel==='party'&&<>
+    <div style={{ textAlign: 'center', padding: '10px 0 6px' }}>
+      <div style={{ width: '60px', height: '60px', borderRadius: '50%', background: 'linear-gradient(135deg, rgba(255,122,51,0.2) 0%, rgba(255,82,27,0.1) 100%)', color: '#ff7a33', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px', border: '1px solid rgba(255,122,51,0.3)', boxShadow: '0 0 25px rgba(255,122,51,0.2)' }}>
+        <Users size={30} />
       </div>
-    ) : (
-      <div className="dc-party-active" style={{background:'rgba(255,255,255,0.03)', padding:'32px 24px', borderRadius:'8px', marginTop:'24px', textAlign:'center'}}>
-        <span className="dc-eyebrow">YOUR ROOM CODE</span>
-        <h2 style={{fontSize:'56px', letterSpacing:'8px', margin:'16px 0', color:'#e3c88a'}}>{watchParty.partyCode}</h2>
-        <p style={{marginBottom:'32px'}}>Share this code with your friends.</p>
-        <div style={{background:'rgba(0,0,0,0.3)', padding:'20px', borderRadius:'6px', textAlign:'left'}}>
-          <h4 style={{margin:0, opacity:0.5, fontSize:'11px', letterSpacing:'1px', marginBottom:'12px'}}>IN THIS ROOM</h4>
-          <div style={{display:'flex', gap:'12px', flexWrap:'wrap'}}>
-            <span style={{padding:'8px 16px', background:'rgba(255,255,255,0.1)', borderRadius:'16px', fontSize:'13px', fontWeight:500}}>👑 {watchParty.hostName}</span>
-            {watchParty.guests.map(g => <span key={g} style={{padding:'8px 16px', background:'rgba(255,255,255,0.05)', borderRadius:'16px', fontSize:'13px'}}>{g}</span>)}
-          </div>
+      <span className="dc-eyebrow" style={{ color: '#ff7a33', letterSpacing: '2px', display: 'block', marginBottom: '8px' }}>DARLING CINEMAS SYNC</span>
+      <h2 style={{ fontSize: '32px', margin: '4px 0 12px', fontWeight: 800, color: '#fff' }}>Watch Party</h2>
+      <p style={{ maxWidth: '400px', margin: '0 auto 20px', fontSize: '13px', lineHeight: '1.7', color: 'rgba(255,255,255,0.75)' }}>
+        Sync your private theatre screen with friends in real-time. Invite up to 10 guests to your private screen.
+      </p>
+
+      <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '16px', padding: '24px 20px', margin: '20px 0', backdropFilter: 'blur(16px)' }}>
+        <div style={{ display: 'inline-block', background: 'rgba(255,102,51,0.2)', color: '#ffab73', border: '1px solid rgba(255,102,51,0.35)', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, letterSpacing: '1px', textTransform: 'uppercase', marginBottom: '12px' }}>
+          🚀 Beta Coming Soon
         </div>
-        {!watchParty.isHost && !media.filename && !watchParty.hostVideoUrl && (
-          <div style={{marginTop:'24px', padding:'16px', background:'rgba(255,255,255,0.05)', borderRadius:'6px', textAlign:'left'}}>
-            <strong style={{display:'block', marginBottom:'4px'}}>Waiting for host</strong>
-            <span style={{fontSize:'13px', opacity:0.8}}>The host has not started a video yet.</span>
-          </div>
-        )}
-        {!watchParty.isHost && watchParty.hostVideoUrl?.startsWith('local:') && (
-          <div style={{marginTop:'24px', padding:'16px', background:'rgba(14,165,233,0.1)', border:'1px solid rgba(14,165,233,0.2)', borderRadius:'6px', textAlign:'left'}}>
-            <strong style={{display:'block', marginBottom:'4px', color:'#38bdf8'}}>Live Streaming</strong>
-            <span style={{fontSize:'13px', opacity:0.8, color:'#bae6fd'}}>Receiving the host's video feed securely via WebRTC.</span>
-          </div>
-        )}
-        <button className="dc-wide secondary" style={{marginTop:'32px', border:'1px solid rgba(255,255,255,0.1)'}} onClick={watchParty.leaveParty}>Leave party</button>
+        <p style={{ margin: 0, fontSize: '14px', color: '#f5eedc', fontWeight: 500 }}>
+          Beta version coming later. You will be notified soon!
+        </p>
       </div>
-    )}
-    <button className="dc-wide secondary" onClick={close} style={{marginTop:'16px'}}>Back to the cinema →</button></>}
+
+      <button className="dc-wide" onClick={() => { setNotice('You will be notified as soon as Watch Party beta is ready!'); close(); }} style={{ justifyContent: 'center', gap: '8px' }}>
+        <Bell size={16} /> Notify Me When Ready
+      </button>
+      <button className="dc-wide secondary" onClick={close} style={{ marginTop: '8px', justifyContent: 'center' }}>
+        Back to the cinema →
+      </button>
+    </div>
+   </>}
    <div className="dc-panel-footer">DARLING CINEMAS · THE PRIVATE CINEMA</div>
   </div></div>}
   {dev&&<details className="dc-debug"><summary>Camera tuning</summary><button onClick={()=>{stand();setRoute({id:"CANTEEN",request:Date.now()});}}>Walk to canteen (QA)</button><button onClick={()=>{setCamera(REFERENCE_GEOMETRY_VIEW);}}>Load Reference Camera</button><button onClick={async()=>{const response=await fetch("/qa/cinema-qa.mp4");load(new File([await response.blob()],"Generated QA clip.mp4",{type:"video/mp4"}));}}>Load generated QA clip</button>{Object.entries(camera).map(([key,value])=><label key={key}>{key}<input type="number" step={key==='sensitivity'?'.001':'.1'} value={value} onChange={e=>setCamera({...camera,[key]:+e.target.value})}/></label>)}</details>}
@@ -186,16 +168,16 @@ export default function Home(){
           {appState === 'LANDING' ? (
             <div className="dc-landing-buttons">
               {!isDesktopApp && (
-                <a
-                  href="https://github.com/Phanendra1275/DarlingCinemas/releases/download/v0.1.0/Darling.Cinemas.Setup.0.1.0.exe"
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => setNotice("Beta version coming later. You will be notified soon!")}
                   className="dc-btn-primary"
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                 >
-                   <svg className="dc-icon" viewBox="0 0 24 24" fill="currentColor" style={{marginRight: '8px', width: '18px', height: '18px'}}><path d="M2.5 11V5l8-1v7H2.5zm9 0V3.5l10-1.5V11h-10zm-9 1v6l8 1v-7H2.5zm9 0v7l10 1.5V12h-10z"/></svg>
-                   Download for Windows
-                   <span className="dc-arrow">→</span>
-                </a>
+                   <svg className="dc-icon" viewBox="0 0 24 24" fill="currentColor" style={{width: '18px', height: '18px'}}><path d="M2.5 11V5l8-1v7H2.5zm9 0V3.5l10-1.5V11h-10zm-9 1v6l8 1v-7H2.5zm9 0v7l10 1.5V12h-10z"/></svg>
+                   <span>Download for Windows</span>
+                   <span style={{ fontSize: '10px', background: 'rgba(0,0,0,0.3)', padding: '2px 8px', borderRadius: '10px', textTransform: 'uppercase', letterSpacing: '0.8px', fontWeight: 700 }}>Coming Soon</span>
+                </button>
               )}
               <button onClick={enterFromLanding} className={isDesktopApp ? "dc-btn-primary" : "dc-btn-secondary"}>
                  <svg className="dc-icon play-icon" viewBox="0 0 24 24" fill="currentColor" style={{marginRight: '8px', width: '18px', height: '18px', color: isDesktopApp ? '#fff' : '#ff6633'}}><path d="M8 5v14l11-7z"/></svg>
