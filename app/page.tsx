@@ -186,7 +186,12 @@ export default function Home(){
           {appState === 'LANDING' ? (
             <div className="dc-landing-buttons">
               {!isDesktopApp && (
-                <a href="/Darling Cinemas Setup 0.1.0.exe" download className="dc-btn-primary">
+                <a
+                  href="https://github.com/Phanendra1275/DarlingCinemas/releases/download/v0.1.0/Darling.Cinemas.Setup.0.1.0.exe"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="dc-btn-primary"
+                >
                    <svg className="dc-icon" viewBox="0 0 24 24" fill="currentColor" style={{marginRight: '8px', width: '18px', height: '18px'}}><path d="M2.5 11V5l8-1v7H2.5zm9 0V3.5l10-1.5V11h-10zm-9 1v6l8 1v-7H2.5zm9 0v7l10 1.5V12h-10z"/></svg>
                    Download for Windows
                    <span className="dc-arrow">→</span>
