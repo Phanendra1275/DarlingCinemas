@@ -3,6 +3,15 @@ import type { PartyMember, ChatMessage, PartyReaction, RoomState } from '../app/
 
 export type { PartyMember, ChatMessage, PartyReaction };
 
+const ICE_SERVERS: RTCConfiguration = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.cloudflare.com:3478' }
+  ]
+};
+
 export function useWatchParty(media: any, userName: string) {
   const [partyCode, setPartyCode] = useState<string | null>(null);
   const [isHost, setIsHost] = useState(false);
@@ -14,7 +23,7 @@ export function useWatchParty(media: any, userName: string) {
   const [reactions, setReactions] = useState<PartyReaction[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Use refs to avoid continuous re-renders on the interval loop
+  // Keep fresh references to avoid stale closure issues in interval callbacks
   const mediaRef = useRef(media);
   useEffect(() => { mediaRef.current = media; }, [media]);
 
@@ -43,9 +52,7 @@ export function useWatchParty(media: any, userName: string) {
   };
 
   const createPeerConnection = (peerName: string) => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
+    const pc = new RTCPeerConnection(ICE_SERVERS);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
@@ -56,9 +63,16 @@ export function useWatchParty(media: any, userName: string) {
     if (!isHost) {
       pc.ontrack = (event) => {
         const m = mediaRef.current;
-        if (m && m.videoElement) {
-          m.videoElement.srcObject = event.streams[0];
-          m.videoElement.play().catch(() => {});
+        if (event.streams && event.streams[0]) {
+          const stream = event.streams[0];
+          if (m) {
+            if (m.loadStream) {
+              m.loadStream(stream, 'Host Cinema Screen');
+            } else if (m.videoElement) {
+              m.videoElement.srcObject = stream;
+              m.videoElement.play().catch(() => {});
+            }
+          }
         }
       };
     }
@@ -92,6 +106,7 @@ export function useWatchParty(media: any, userName: string) {
         setMessages([]);
         setReactions([]);
         setError(null);
+        pcs.current.forEach(pc => pc.close());
         pcs.current.clear();
         candidateQueue.current.clear();
         return data.code;
@@ -132,6 +147,7 @@ export function useWatchParty(media: any, userName: string) {
         }
         if (data.messages) setMessages(data.messages);
         setError(null);
+        pcs.current.forEach(pc => pc.close());
         pcs.current.clear();
         candidateQueue.current.clear();
         syncMediaToState(data);
@@ -194,7 +210,6 @@ export function useWatchParty(media: any, userName: string) {
   const sendReaction = async (emoji: string, seat?: string | null) => {
     if (!partyCode || !emoji) return;
     try {
-      // Local optimistic reaction display
       const localReact: PartyReaction = {
         id: `react-local-${Date.now()}`,
         from: assignedName.current,
@@ -265,11 +280,13 @@ export function useWatchParty(media: any, userName: string) {
     const m = mediaRef.current;
     if (!m) return;
     
-    if (state.videoUrl && state.videoUrl.startsWith('http') && m.filename !== state.videoUrl && !m.filename?.includes('blob:')) {
+    // If it is a web URL or internal streaming URL (/api/drive-stream, http...)
+    if (state.videoUrl && (state.videoUrl.startsWith('http') || state.videoUrl.startsWith('/api/')) && m.filename !== state.videoUrl && !m.filename?.includes('blob:')) {
       if (m.loadUrl) m.loadUrl(state.videoUrl);
     }
     
     if (m.videoElement) {
+      // If we are NOT receiving a WebRTC stream (direct URL sync)
       if (!m.videoElement.srcObject) {
         if (state.isPlaying && m.videoElement.paused) m.videoElement.play().catch(()=>{});
         if (!state.isPlaying && !m.videoElement.paused) m.videoElement.pause();
@@ -283,17 +300,19 @@ export function useWatchParty(media: any, userName: string) {
     }
   };
 
-  // Host WebRTC streaming logic
-  useEffect(() => {
+  // Host WebRTC streaming logic: continuously ensures all guests receive media tracks
+  const setupHostStreams = useCallback(() => {
     if (!isHost || !partyCode) return;
     const m = mediaRef.current;
     const video = m?.videoElement as any;
     if (!video) return;
 
-    const shouldStream = m.filename && !m.filename.startsWith('http');
+    // Stream local files, blob URLs, or active screen sharing
+    const shouldStream = (m.filename && !m.filename.startsWith('http') && !m.filename.startsWith('/api/')) || !!video.srcObject;
     
     if (shouldStream) {
-      const getStream = () => {
+      const getStream = (): MediaStream | null => {
+        if (video.srcObject instanceof MediaStream) return video.srcObject;
         if (video.captureStream) return video.captureStream();
         if (video.mozCaptureStream) return video.mozCaptureStream();
         if (video.webkitCaptureStream) return video.webkitCaptureStream();
@@ -301,24 +320,29 @@ export function useWatchParty(media: any, userName: string) {
       };
       
       const stream = getStream();
-      if (stream) {
+      if (stream && stream.getTracks().length > 0) {
         guests.forEach(async (guest) => {
-          if (!pcs.current.has(guest)) {
-            const pc = createPeerConnection(guest);
-            stream.getTracks().forEach((t: any) => pc.addTrack(t, stream));
+          let pc = pcs.current.get(guest);
+          if (!pc) {
+            pc = createPeerConnection(guest);
+            stream.getTracks().forEach((track: any) => {
+              try { pc!.addTrack(track, stream); } catch {}
+            });
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
             sendSignal(guest, { offer });
           }
         });
       }
-    } else {
-      pcs.current.forEach(pc => pc.close());
-      pcs.current.clear();
     }
-  }, [guests, isHost, partyCode]);
+  }, [isHost, partyCode, guests]);
 
-  // Sync Loop
+  // Run stream setup whenever guests list, media filename, or playing state updates
+  useEffect(() => {
+    setupHostStreams();
+  }, [setupHostStreams, media?.filename, media?.isPlaying, guests]);
+
+  // Sync Polling Loop
   useEffect(() => {
     if (!partyCode) return;
     
@@ -328,18 +352,24 @@ export function useWatchParty(media: any, userName: string) {
         
         // Push host playback update and local member presence update
         if (isHost) {
+          const videoUrl = m.filename
+            ? (m.filename.startsWith('http') || m.filename.startsWith('/api/') ? m.filename : `local:${m.filename}`)
+            : '';
           await fetch('/api/party', {
             method: 'POST',
             body: JSON.stringify({
               action: 'update',
               code: partyCode,
               state: {
-                videoUrl: m.filename ? (m.filename.startsWith('http') ? m.filename : `local:${m.filename}`) : '',
+                videoUrl,
                 isPlaying: m.isPlaying,
                 currentTime: m.progress,
               }
             })
           }).catch(()=>{});
+
+          // Also trigger stream check for any pending guests
+          setupHostStreams();
         }
 
         // Send periodic member presence heartbeat
@@ -377,12 +407,12 @@ export function useWatchParty(media: any, userName: string) {
           setError('Party room was closed.');
         }
       } catch (err) {
-        // Ignore background polling errors
+        // Ignore background polling network glitches
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [partyCode, isHost]);
+  }, [partyCode, isHost, setupHostStreams]);
 
   return {
     partyCode,
