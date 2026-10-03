@@ -1,21 +1,17 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import type { PartyMember, ChatMessage, PartyReaction, RoomState } from '../app/api/party/route';
 
-type RoomState = {
-  host: string;
-  guests: string[];
-  videoUrl: string;
-  isPlaying: boolean;
-  currentTime: number;
-  lastUpdate: number;
-  signals?: { from: string; data: any }[];
-};
+export type { PartyMember, ChatMessage, PartyReaction };
 
 export function useWatchParty(media: any, userName: string) {
   const [partyCode, setPartyCode] = useState<string | null>(null);
   const [isHost, setIsHost] = useState(false);
   const [guests, setGuests] = useState<string[]>([]);
+  const [members, setMembers] = useState<PartyMember[]>([]);
   const [hostName, setHostName] = useState<string>('');
   const [hostVideoUrl, setHostVideoUrl] = useState<string>('');
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [reactions, setReactions] = useState<PartyReaction[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Use refs to avoid continuous re-renders on the interval loop
@@ -23,8 +19,20 @@ export function useWatchParty(media: any, userName: string) {
   useEffect(() => { mediaRef.current = media; }, [media]);
 
   const assignedName = useRef(userName);
+  useEffect(() => {
+    if (!partyCode) assignedName.current = userName;
+  }, [userName, partyCode]);
+
   const pcs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const candidateQueue = useRef<Map<string, any[]>>(new Map());
+  const myPresenceRef = useRef<{
+    seat: string | null;
+    jacket?: string;
+    gender?: 'Male' | 'Female';
+    position?: { x: number; y: number; z: number };
+    rotation?: number;
+    isWalking?: boolean;
+  }>({ seat: null });
 
   const sendSignal = async (to: string, data: any) => {
     if (!partyCode) return;
@@ -59,51 +67,82 @@ export function useWatchParty(media: any, userName: string) {
     return pc;
   };
 
-  const createParty = async () => {
+  const createParty = async (profile?: { jacket?: string; gender?: 'Male' | 'Female'; seat?: string | null }) => {
     try {
       const res = await fetch('/api/party', {
         method: 'POST',
-        body: JSON.stringify({ action: 'create', guestName: userName }),
+        body: JSON.stringify({
+          action: 'create',
+          guestName: userName,
+          memberData: {
+            jacket: profile?.jacket || '#d6cdb4',
+            gender: profile?.gender || 'Male',
+            seat: profile?.seat || null,
+          }
+        }),
       });
       const data = await res.json() as any;
       if (data.code) {
         setPartyCode(data.code);
         setIsHost(true);
-        assignedName.current = userName;
-        setHostName(userName);
+        assignedName.current = data.assignedName || userName;
+        setHostName(data.assignedName || userName);
         setGuests([]);
+        setMembers([]);
+        setMessages([]);
+        setReactions([]);
         setError(null);
         pcs.current.clear();
         candidateQueue.current.clear();
+        return data.code;
       }
     } catch (err) {
-      setError('Failed to create party.');
+      setError('Failed to create watch party.');
     }
+    return null;
   };
 
-  const joinParty = async (code: string) => {
+  const joinParty = async (code: string, profile?: { jacket?: string; gender?: 'Male' | 'Female'; seat?: string | null }) => {
     try {
+      const cleanCode = code.trim();
       const res = await fetch('/api/party', {
         method: 'POST',
-        body: JSON.stringify({ action: 'join', code, guestName: userName }),
+        body: JSON.stringify({
+          action: 'join',
+          code: cleanCode,
+          guestName: userName,
+          memberData: {
+            jacket: profile?.jacket || '#803747',
+            gender: profile?.gender || 'Male',
+            seat: profile?.seat || null,
+          }
+        }),
       });
       if (res.ok) {
         const data = await res.json() as any;
-        setPartyCode(code);
+        setPartyCode(cleanCode);
         setIsHost(false);
         assignedName.current = data.assignedName || userName;
         setHostName(data.host);
-        setGuests(data.guests);
+        setGuests(data.guests || []);
+        if (data.members) {
+          const remoteList = Object.values(data.members as Record<string, PartyMember>)
+            .filter(m => m.name !== (data.assignedName || userName));
+          setMembers(remoteList);
+        }
+        if (data.messages) setMessages(data.messages);
         setError(null);
         pcs.current.clear();
         candidateQueue.current.clear();
         syncMediaToState(data);
+        return true;
       } else {
-        setError('Room not found or could not join.');
+        setError('Room not found or code invalid.');
       }
     } catch (err) {
-      setError('Failed to join party.');
+      setError('Failed to join watch party.');
     }
+    return false;
   };
 
   const leaveParty = async () => {
@@ -115,9 +154,69 @@ export function useWatchParty(media: any, userName: string) {
     }
     setPartyCode(null);
     setIsHost(false);
+    setMembers([]);
+    setMessages([]);
+    setReactions([]);
     pcs.current.forEach(pc => pc.close());
     pcs.current.clear();
     candidateQueue.current.clear();
+  };
+
+  const updateMyPresence = useCallback((presence: {
+    seat?: string | null;
+    jacket?: string;
+    gender?: 'Male' | 'Female';
+    position?: { x: number; y: number; z: number };
+    rotation?: number;
+    isWalking?: boolean;
+  }) => {
+    myPresenceRef.current = { ...myPresenceRef.current, ...presence };
+  }, []);
+
+  const sendMessage = async (text: string, seat?: string | null) => {
+    if (!partyCode || !text.trim()) return;
+    try {
+      await fetch('/api/party', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'chat',
+          code: partyCode,
+          guestName: assignedName.current,
+          message: {
+            text,
+            seat: seat !== undefined ? seat : myPresenceRef.current.seat,
+          }
+        })
+      });
+    } catch {}
+  };
+
+  const sendReaction = async (emoji: string, seat?: string | null) => {
+    if (!partyCode || !emoji) return;
+    try {
+      // Local optimistic reaction display
+      const localReact: PartyReaction = {
+        id: `react-local-${Date.now()}`,
+        from: assignedName.current,
+        seat: seat !== undefined ? seat : myPresenceRef.current.seat,
+        emoji,
+        timestamp: Date.now(),
+      };
+      setReactions(prev => [...prev.slice(-20), localReact]);
+
+      await fetch('/api/party', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'reaction',
+          code: partyCode,
+          guestName: assignedName.current,
+          reaction: {
+            emoji,
+            seat: seat !== undefined ? seat : myPresenceRef.current.seat,
+          }
+        })
+      });
+    } catch {}
   };
 
   const processSignals = async (signals: any[]) => {
@@ -154,7 +253,6 @@ export function useWatchParty(media: any, userName: string) {
         if (pc && pc.remoteDescription) {
           await pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(()=>{});
         } else {
-          // Store candidates if remote description is not set yet due to network race conditions
           const q = candidateQueue.current.get(peer) || [];
           q.push(data.candidate);
           candidateQueue.current.set(peer, q);
@@ -167,14 +265,11 @@ export function useWatchParty(media: any, userName: string) {
     const m = mediaRef.current;
     if (!m) return;
     
-    // We only auto-load standard HTTP URLs.
-    // Local streams are handled via WebRTC `srcObject`
     if (state.videoUrl && state.videoUrl.startsWith('http') && m.filename !== state.videoUrl && !m.filename?.includes('blob:')) {
       if (m.loadUrl) m.loadUrl(state.videoUrl);
     }
     
     if (m.videoElement) {
-      // Don't seek if we are receiving a WebRTC stream (srcObject is set)
       if (!m.videoElement.srcObject) {
         if (state.isPlaying && m.videoElement.paused) m.videoElement.play().catch(()=>{});
         if (!state.isPlaying && !m.videoElement.paused) m.videoElement.pause();
@@ -195,7 +290,6 @@ export function useWatchParty(media: any, userName: string) {
     const video = m?.videoElement as any;
     if (!video) return;
 
-    // We stream local files or screen share (anything that isn't a direct http link)
     const shouldStream = m.filename && !m.filename.startsWith('http');
     
     if (shouldStream) {
@@ -208,7 +302,6 @@ export function useWatchParty(media: any, userName: string) {
       
       const stream = getStream();
       if (stream) {
-        // Find guests who don't have a PC yet and create offers
         guests.forEach(async (guest) => {
           if (!pcs.current.has(guest)) {
             const pc = createPeerConnection(guest);
@@ -220,11 +313,10 @@ export function useWatchParty(media: any, userName: string) {
         });
       }
     } else {
-      // Close existing PCs if we stopped streaming
       pcs.current.forEach(pc => pc.close());
       pcs.current.clear();
     }
-  }, [guests, isHost, partyCode]); // React to new guests
+  }, [guests, isHost, partyCode]);
 
   // Sync Loop
   useEffect(() => {
@@ -232,8 +324,10 @@ export function useWatchParty(media: any, userName: string) {
     
     const interval = setInterval(async () => {
       try {
+        const m = mediaRef.current;
+        
+        // Push host playback update and local member presence update
         if (isHost) {
-          const m = mediaRef.current;
           await fetch('/api/party', {
             method: 'POST',
             body: JSON.stringify({
@@ -245,29 +339,45 @@ export function useWatchParty(media: any, userName: string) {
                 currentTime: m.progress,
               }
             })
-          });
-          const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
-          if (res.ok) {
-            const data = await res.json() as any;
-            setGuests(data.guests);
-            processSignals(data.signals);
+          }).catch(()=>{});
+        }
+
+        // Send periodic member presence heartbeat
+        await fetch('/api/party', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'update_member',
+            code: partyCode,
+            guestName: assignedName.current,
+            memberData: myPresenceRef.current,
+          })
+        }).catch(()=>{});
+
+        // Poll room state
+        const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
+        if (res.ok) {
+          const data = await res.json() as any;
+          setHostName(data.host || '');
+          setGuests(data.guests || []);
+          if (data.members) {
+            const remoteList = Object.values(data.members as Record<string, PartyMember>)
+              .filter(mb => mb.name !== assignedName.current);
+            setMembers(remoteList);
           }
-        } else {
-          const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
-          if (res.ok) {
-            const data = await res.json() as any;
-            setHostName(data.host);
-            setGuests(data.guests);
+          if (data.messages) setMessages(data.messages);
+          if (data.reactions) setReactions(data.reactions);
+          
+          if (!isHost) {
             setHostVideoUrl(data.videoUrl || '');
             syncMediaToState(data);
-            processSignals(data.signals);
-          } else {
-            leaveParty();
-            setError('Host closed the party.');
           }
+          processSignals(data.signals);
+        } else if (res.status === 404) {
+          leaveParty();
+          setError('Party room was closed.');
         }
       } catch (err) {
-        // Ignore network errors in polling
+        // Ignore background polling errors
       }
     }, 1000);
 
@@ -280,9 +390,15 @@ export function useWatchParty(media: any, userName: string) {
     hostName,
     hostVideoUrl,
     guests,
+    members,
+    messages,
+    reactions,
     error,
     createParty,
     joinParty,
     leaveParty,
+    sendMessage,
+    sendReaction,
+    updateMyPresence,
   };
 }

@@ -2,11 +2,102 @@
 import {useEffect,useRef} from 'react';
 import * as T from 'three';
 import {buildCinema,createAvatar,floorHeight,seats,SCREEN,THEATRE_CONFIG,createSnacks} from './cinema-scene';
-export type Member={id:string;seat:string|null;color:string;name?:string};
+import type { PartyMember, PartyReaction } from '../hooks/use-watch-party';
+
 export type CameraSettings={fov:number;distance:number;height:number;pitch:number;targetHeight:number;sideOffset:number;damping:number;sensitivity:number;heroX:number;heroY:number;heroZ:number;targetX:number;targetY:number;targetZ:number;yaw:number;collisionDistance:number};
 export const defaultCamera:CameraSettings={fov:64,distance:3.2,height:.65,pitch:.04,targetHeight:1.35,sideOffset:0,damping:7,sensitivity:.003,heroX:6.85,heroY:4.2,heroZ:7.2,targetX:-.65,targetY:1,targetZ:-2.5,yaw:0,collisionDistance:.18};
 export const REFERENCE_GEOMETRY_VIEW:CameraSettings={fov:64,distance:0,height:1.2,pitch:0,targetHeight:1.2,sideOffset:0,damping:7,sensitivity:.003,heroX:5.5,heroY:1.2,heroZ:4.5,targetX:-1.0,targetY:1.2,targetZ:-2.0,yaw:0,collisionDistance:.18};
-export type TheatreProps={seat:string|null;video?:HTMLVideoElement|null;lite?:boolean;members?:Member[];service?:number;onSeat?:(seat:string)=>void;onNearbySeat?:(seat:string|null)=>void;onFps?:(fps:number)=>void;onWalk?:()=>void;moveRef?:React.MutableRefObject<{x:number;y:number;magnitude:number}>;reset?:number;zoom?:boolean;isTouch?:boolean;walk?:number;jacket?:string;cameraSettings?:CameraSettings;blocked?:boolean;quality?:string;reducedMotion?:boolean;highRefresh?:boolean;destination?:{id:string;request:number}|null;onRouteCancel?:()=>void;onServiceState?:(state:string)=>void;name?:string;gender?:string;};
+
+export type TheatreProps={
+  seat:string|null;
+  video?:HTMLVideoElement|null;
+  lite?:boolean;
+  members?:PartyMember[];
+  reactions?:PartyReaction[];
+  service?:number;
+  onSeat?:(seat:string)=>void;
+  onNearbySeat?:(seat:string|null)=>void;
+  onFps?:(fps:number)=>void;
+  onWalk?:()=>void;
+  moveRef?:React.MutableRefObject<{x:number;y:number;magnitude:number}>;
+  reset?:number;
+  zoom?:boolean;
+  isTouch?:boolean;
+  walk?:number;
+  jacket?:string;
+  cameraSettings?:CameraSettings;
+  blocked?:boolean;
+  quality?:string;
+  reducedMotion?:boolean;
+  highRefresh?:boolean;
+  destination?:{id:string;request:number}|null;
+  onRouteCancel?:()=>void;
+  onServiceState?:(state:string)=>void;
+  onPlayerPresence?:(presence: { position: { x: number; y: number; z: number }; rotation: number; isWalking: boolean }) => void;
+  name?:string;
+  gender?:string;
+};
+
+function createBillboardSprite(text: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0,0,256,64);
+  ctx.fillStyle = 'rgba(10, 11, 16, 0.75)';
+  ctx.beginPath();
+  ctx.roundRect(16, 12, 224, 40, 12);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.fillStyle = '#f5eedc';
+  ctx.font = 'bold 14px "Montserrat", Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text.toUpperCase(), 128, 32);
+  const tex = new T.CanvasTexture(canvas);
+  const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new T.Sprite(mat);
+  sprite.scale.set(0.95, 0.95 * (64 / 256), 1);
+  sprite.position.set(0, 2.15, 0);
+  return { sprite, canvas, ctx, tex, mat };
+}
+
+function createEmojiSprite(emoji: string) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 128;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0,0,128,128);
+  ctx.font = '68px Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(emoji, 64, 64);
+  const tex = new T.CanvasTexture(canvas);
+  const mat = new T.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new T.Sprite(mat);
+  sprite.scale.set(0.65, 0.65, 1);
+  sprite.position.set(0, 2.6, 0);
+  sprite.visible = false;
+  return { sprite, tex, mat, canvas, ctx };
+}
+
+type RemoteAvatarObject = {
+  name: string;
+  jacketColor: string;
+  gender: string;
+  avatar: ReturnType<typeof createAvatar>;
+  nameTag: ReturnType<typeof createBillboardSprite>;
+  emojiTag: ReturnType<typeof createEmojiSprite>;
+  currentPos: T.Vector3;
+  targetPos: T.Vector3;
+  yaw: number;
+  targetYaw: number;
+  lastReactionId?: string;
+  reactionStart?: number;
+};
+
 export default function Theatre(props:TheatreProps){
  const host=useRef<HTMLDivElement>(null),latest=useRef(props);latest.current=props;
  useEffect(()=>{if(!host.current)return;const el=host.current;el.style.backgroundColor='#14120f';let renderer:T.WebGLRenderer;
@@ -22,8 +113,15 @@ export default function Theatre(props:TheatreProps){
   const nameSprite=new T.Sprite(nameMat);
   nameSprite.scale.set(0.9,0.9*(64/256),1);
   nameSprite.position.set(0,2.05,0);
-  nameSprite.visible=false; // Only visible to other users
+  nameSprite.visible=false;
   avatar.root.add(nameSprite);
+
+  // Local emoji reaction sprite
+  const localEmoji = createEmojiSprite('🍿');
+  avatar.root.add(localEmoji.sprite);
+  let localReactionStart = 0;
+  let lastLocalReactionId = '';
+
   let lastName='';
   const camera=new T.PerspectiveCamera(64,1,.08,60);camera.position.set(6.85,4.5,8.8);
   const listener=new T.AudioListener();camera.add(listener);
@@ -60,9 +158,16 @@ export default function Theatre(props:TheatreProps){
  const wheel=(e:WheelEvent)=>{if(latest.current.blocked)return;e.preventDefault();distance=T.MathUtils.clamp(distance+e.deltaY*.004,1.8,6);};
  renderer.domElement.addEventListener('pointerdown',down);renderer.domElement.addEventListener('pointermove',move);renderer.domElement.addEventListener('pointerup',up);renderer.domElement.addEventListener('pointercancel',up);renderer.domElement.addEventListener('wheel',wheel,{passive:false});window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);
  const resize=()=>{const w=el.clientWidth,h=el.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);};const observer=new ResizeObserver(resize);observer.observe(el);resize();
- let id=0,last=performance.now(),fpsAt=last,count=0,previousSettings=props.cameraSettings;
- let lastIframeFallback: string | null | undefined = undefined;
- function frame(t:number){id=requestAnimationFrame(frame);if(!latest.current.highRefresh&&t-last<1000/60-.5)return;const dt=Math.min((t-last)/1000,.08);last=t;elapsed+=dt;const p=latest.current,cfg=p.cameraSettings??defaultCamera,blend=1-Math.exp(-dt*(p.reducedMotion?20:cfg.damping));
+
+ // Multiplayer remote avatars collection
+ const remoteAvatars = new Map<string, RemoteAvatarObject>();
+
+ let id=0,last=performance.now(),fpsAt=last,count=0,previousSettings=props.cameraSettings,lastPresencePush=0;
+
+ function frame(t:number){
+  id=requestAnimationFrame(frame);
+  if(!latest.current.highRefresh&&t-last<1000/60-.5)return;
+  const dt=Math.min((t-last)/1000,.08);last=t;elapsed+=dt;const p=latest.current,cfg=p.cameraSettings??defaultCamera,blend=1-Math.exp(-dt*(p.reducedMotion?20:cfg.damping));
   const dpr=p.quality==='Ultra'?Math.min(devicePixelRatio,2):p.lite?1:Math.min(devicePixelRatio,p.isTouch?1.25:1.5);renderer.shadowMap.enabled=!p.lite;if(dpr!==lastDpr){renderer.setPixelRatio(dpr);lastDpr=dpr;resize();}const fov=p.zoom&&p.seat?40:cfg.fov;if(fov!==lastFov){camera.fov=fov;camera.updateProjectionMatrix();lastFov=fov;}
   if(previousSettings!==p.cameraSettings){distance=cfg.distance;pitch=cfg.pitch;yaw=cfg.yaw;previousSettings=p.cameraSettings;}
   if(p.name!==lastName){lastName=p.name??'Guest';nctx.clearRect(0,0,256,64);nctx.fillStyle='rgba(0,0,0,0.4)';nctx.beginPath();nctx.roundRect(32,16,192,32,16);nctx.fill();nctx.fillStyle='rgba(255,255,255,0.85)';nctx.font='600 13px "Inter", sans-serif';nctx.textAlign='center';nctx.textBaseline='middle';nctx.letterSpacing='2px';nctx.fillText(lastName.toUpperCase(),128,32);nameTex.needsUpdate=true;}
@@ -71,21 +176,167 @@ export default function Theatre(props:TheatreProps){
   if(p.reset!==lastReset){lastReset=p.reset;overview=true;player.set(6.45,.32,5.9);yaw=0;pitch=cfg.pitch;distance=cfg.distance;velocity.set(0,0);}
   if(p.walk!==lastWalk){lastWalk=p.walk;startWalk();}
   if(p.seat!==lastSeat){if(p.seat){overview=false;velocity.set(0,0);yaw=0;pitch=0;}else if(lastSeat){const s=seats.find(s=>s.id===lastSeat)!;player.copy(s.interactionPoint);player.z-=.12;overview=false;pitch=cfg.pitch;}lastSeat=p.seat;}
-  if(p.destination&&p.destination.request!==destinationRequest){destinationRequest=p.destination.request;const dest=seats.find(s=>s.id===p.destination!.id)??{id:'CANTEEN',interactionPoint:new T.Vector3(1,THEATRE_CONFIG.riserHeight,12.8)};const side=player.x<0?-6.75:6.75;const currentLane=player.z>3?2.7:-.75;route=[new T.Vector3(side,0,player.z),new T.Vector3(side,0,dest.interactionPoint.z),dest.interactionPoint.clone()];routeSeat=dest.id;startWalk();}else if(!p.destination&&routeSeat){route=[];routeSeat=null;}
+  if(p.destination&&p.destination.request!==destinationRequest){destinationRequest=p.destination.request;const dest=seats.find(s=>s.id===p.destination!.id)??{id:'CANTEEN',interactionPoint:new T.Vector3(1,THEATRE_CONFIG.riserHeight,12.8)};const side=player.x<0?-6.75:6.75;route=[new T.Vector3(side,0,player.z),new T.Vector3(side,0,dest.interactionPoint.z),dest.interactionPoint.clone()];routeSeat=dest.id;startWalk();}else if(!p.destination&&routeSeat){route=[];routeSeat=null;}
   if(p.service&&p.service!==lastService){lastService=p.service;serviceStarted=t;server.root.visible=true;p.onServiceState?.('Server on the way');}
   if(serviceStarted){const ss=seats.find(s=>s.id===p.seat);const elapsedService=(t-serviceStarted)/1000;const sx=ss?.position.x??player.x,sz=ss?.position.z??player.z;const progress=Math.min(elapsedService/4,1);server.root.position.set(6.7+(sx+.95-6.7)*progress,floorHeight(sz,6.7),8+(sz-8)*progress);server.arms[0].rotation.x=-1;if(elapsedService>6){server.root.visible=false;serviceStarted=0;p.onServiceState?.('Enjoying your order - Popcorn & drink');if(ss){snacks.position.set(ss.position.x+.8,ss.position.y+1.07,ss.position.z-.3);snacks.visible=true;}}}
   const selected=seats.find(s=>s.id===p.seat);
+  let isMoving = false;
   if(selected){avatar.root.position.lerp(selected.sitPosition,blend);avatar.root.rotation.y=0;avatar.legs.forEach(l=>l.rotation.x=T.MathUtils.lerp(l.rotation.x,1.4,blend));avatar.knees.forEach(k=>k.rotation.x=T.MathUtils.lerp(k.rotation.x,-1.4,blend));avatar.arms.forEach(a=>a.rotation.x=-.35);desired.copy(selected.cameraPosition);focus.copy(selected.cameraTarget);focus.x+=Math.sin(yaw)*4;focus.y-=pitch*4;avatar.root.visible=camera.position.distanceTo(selected.cameraPosition)>.8;}
   else{avatar.root.visible=true;avatar.knees.forEach(k=>k.rotation.x=T.MathUtils.lerp(k.rotation.x,0,blend));const joy=p.moveRef?.current;let x=p.blocked?0:(keys.has('d')?1:0)-(keys.has('a')?1:0)+(joy?.x??0),z=p.blocked?0:(keys.has('s')?1:0)-(keys.has('w')?1:0)+(joy?.y??0);const len=Math.hypot(x,z);if(len>1){x/=len;z/=len;}if(len>.05)startWalk();const vx=(x*Math.cos(yaw)+z*Math.sin(yaw))*2.65,vz=(-x*Math.sin(yaw)+z*Math.cos(yaw))*2.65;velocity.x=T.MathUtils.lerp(velocity.x,vx,1-Math.exp(-dt*(len?9:12)));velocity.y=T.MathUtils.lerp(velocity.y,vz,1-Math.exp(-dt*(len?9:12)));
    if(len>.05&&route.length){route=[];routeSeat=null;p.onRouteCancel?.();}
    if(route.length&&!p.blocked){const waypoint=route[0];const dx=waypoint.x-player.x,dz=waypoint.z-player.z,d=Math.hypot(dx,dz);if(d<.09){route.shift();if(!route.length&&routeSeat){if(routeSeat==='CANTEEN'){yaw=Math.PI;p.onRouteCancel?.();}else p.onSeat?.(routeSeat);routeSeat=null;}}else velocity.set(dx/d*2.6,dz/d*2.6);}
    const nx=T.MathUtils.clamp(player.x+velocity.x*dt,-7.05,7.05),nz=T.MathUtils.clamp(player.z+velocity.y*dt,-5.5,16.4);if(!blocked(nx,player.z))player.x=nx;const riserZ=seats[5].position.z-2.1;const crossesRiser=Math.abs(player.x)<5.85&&((player.z<riserZ&&nz>=riserZ)||(player.z>=riserZ&&nz<riserZ));if(!blocked(player.x,nz)&&!crossesRiser)player.z=nz;player.y=floorHeight(player.z,player.x);avatar.root.position.copy(player);
-   const speed=velocity.length();if(speed>.1){const targetAngle=Math.atan2(-velocity.x,-velocity.y);avatar.root.rotation.y+=Math.atan2(Math.sin(targetAngle-avatar.root.rotation.y),Math.cos(targetAngle-avatar.root.rotation.y))*blend;}
+   const speed=velocity.length();
+   isMoving = speed > 0.1;
+   if(speed>.1){const targetAngle=Math.atan2(-velocity.x,-velocity.y);avatar.root.rotation.y+=Math.atan2(Math.sin(targetAngle-avatar.root.rotation.y),Math.cos(targetAngle-avatar.root.rotation.y))*blend;}
    avatar.arms.forEach((a,i)=>a.rotation.x=Math.sin(elapsed*8+i*Math.PI)*Math.min(speed*.25,.6));avatar.legs.forEach((l,i)=>l.rotation.x=Math.sin(elapsed*8+i*Math.PI+Math.PI)*Math.min(speed*.22,.55));
    let nearest:string|null=null,best=1.3;for(const s of seats){const d=player.distanceTo(s.interactionPoint);if(d<best){best=d;nearest=s.id;}}if(nearest!==lastNearby){lastNearby=nearest;p.onNearbySeat?.(nearest);}
    if(overview){desired.set(cfg.heroX,cfg.heroY,cfg.heroZ);focus.set(cfg.targetX,cfg.targetY,cfg.targetZ);}else{focus.copy(player);focus.y+=cfg.targetHeight;desired.copy(focus);desired.x+=Math.sin(yaw)*distance+Math.cos(yaw)*cfg.sideOffset;desired.z+=Math.cos(yaw)*distance-Math.sin(yaw)*cfg.sideOffset;desired.y+=cfg.height+Math.sin(pitch)*distance;direction.copy(desired).sub(focus);const max=direction.length();orbitRay.set(focus,direction.normalize());orbitRay.far=max;const hits=orbitRay.intersectObjects([...room.collision,...room.chairs],true);if(hits.length&&hits[0].distance<max)desired.copy(focus).addScaledVector(direction,Math.max(.35,hits[0].distance-cfg.collisionDistance));desired.y=Math.max(floorHeight(desired.z,desired.x)+.5,Math.min(desired.y,5.25));}
   }
   camera.position.lerp(desired,blend);camera.lookAt(focus);
+
+  // Push local presence back to hook / party
+  if(t - lastPresencePush > 200){
+    lastPresencePush = t;
+    p.onPlayerPresence?.({
+      position: { x: player.x, y: player.y, z: player.z },
+      rotation: avatar.root.rotation.y,
+      isWalking: isMoving,
+    });
+  }
+
+  // Animate local floating emoji reaction
+  if(p.reactions && p.reactions.length > 0){
+    const latestReaction = p.reactions[p.reactions.length - 1];
+    if(latestReaction && latestReaction.from === (p.name || 'Guest') && latestReaction.id !== lastLocalReactionId){
+      lastLocalReactionId = latestReaction.id;
+      localReactionStart = t;
+      localEmoji.ctx.clearRect(0,0,128,128);
+      localEmoji.ctx.fillText(latestReaction.emoji, 64, 64);
+      localEmoji.tex.needsUpdate = true;
+      localEmoji.sprite.visible = true;
+    }
+  }
+  if(localReactionStart > 0){
+    const progress = (t - localReactionStart) / 2500;
+    if(progress <= 1){
+      localEmoji.sprite.visible = true;
+      localEmoji.sprite.position.y = 2.2 + progress * 0.9;
+      localEmoji.sprite.scale.setScalar(0.7 * Math.sin(progress * Math.PI));
+      localEmoji.mat.opacity = 1 - Math.pow(progress, 2);
+    } else {
+      localEmoji.sprite.visible = false;
+      localReactionStart = 0;
+    }
+  }
+
+  // Sync Multiplayer 3D Avatars
+  const activeMembers = p.members || [];
+  const currentMemberNames = new Set(activeMembers.map(m => m.name));
+
+  // Remove disconnected members
+  for(const [memName, remoteObj] of remoteAvatars.entries()){
+    if(!currentMemberNames.has(memName)){
+      scene.remove(remoteObj.avatar.root);
+      remoteObj.nameTag.tex.dispose();
+      remoteObj.nameTag.mat.dispose();
+      remoteObj.emojiTag.tex.dispose();
+      remoteObj.emojiTag.mat.dispose();
+      remoteAvatars.delete(memName);
+    }
+  }
+
+  // Create or Update Remote Avatars
+  for(const mem of activeMembers){
+    let remoteObj = remoteAvatars.get(mem.name);
+    if(!remoteObj){
+      const newAvatar = createAvatar(mem.jacket || '#803747', mem.gender || 'Male');
+      const nameTag = createBillboardSprite(mem.seat ? `[${mem.seat}] ${mem.name}` : mem.name);
+      const emojiTag = createEmojiSprite('🍿');
+      newAvatar.root.add(nameTag.sprite);
+      newAvatar.root.add(emojiTag.sprite);
+      scene.add(newAvatar.root);
+
+      remoteObj = {
+        name: mem.name,
+        jacketColor: mem.jacket || '#803747',
+        gender: mem.gender || 'Male',
+        avatar: newAvatar,
+        nameTag,
+        emojiTag,
+        currentPos: new T.Vector3(mem.position?.x ?? 6.45, mem.position?.y ?? 0.32, mem.position?.z ?? 5.9),
+        targetPos: new T.Vector3(mem.position?.x ?? 6.45, mem.position?.y ?? 0.32, mem.position?.z ?? 5.9),
+        yaw: mem.rotation ?? 0,
+        targetYaw: mem.rotation ?? 0,
+      };
+      remoteObj.avatar.root.position.copy(remoteObj.currentPos);
+      remoteAvatars.set(mem.name, remoteObj);
+    }
+
+    // Update jacket color if changed
+    if(mem.jacket && mem.jacket !== remoteObj.jacketColor){
+      remoteObj.jacketColor = mem.jacket;
+      remoteObj.avatar.jacket.color.set(mem.jacket);
+    }
+
+    // Sitting in seat or walking?
+    if(mem.seat){
+      const s = seats.find(st => st.id === mem.seat);
+      if(s){
+        remoteObj.avatar.root.position.lerp(s.sitPosition, blend);
+        remoteObj.avatar.root.rotation.y = 0;
+        remoteObj.avatar.legs.forEach(l => l.rotation.x = T.MathUtils.lerp(l.rotation.x, 1.4, blend));
+        remoteObj.avatar.knees.forEach(k => k.rotation.x = T.MathUtils.lerp(k.rotation.x, -1.4, blend));
+        remoteObj.avatar.arms.forEach(a => a.rotation.x = -0.35);
+      }
+    } else {
+      // Walking / Standing in theatre
+      if(mem.position){
+        remoteObj.targetPos.set(mem.position.x, mem.position.y, mem.position.z);
+        remoteObj.avatar.root.position.lerp(remoteObj.targetPos, blend);
+      }
+      if(mem.rotation !== undefined){
+        remoteObj.avatar.root.rotation.y = T.MathUtils.lerp(remoteObj.avatar.root.rotation.y, mem.rotation, blend);
+      }
+      remoteObj.avatar.knees.forEach(k => k.rotation.x = T.MathUtils.lerp(k.rotation.x, 0, blend));
+      
+      if(mem.isWalking){
+        remoteObj.avatar.arms.forEach((a,i)=>a.rotation.x = Math.sin(elapsed*8+i*Math.PI)*0.45);
+        remoteObj.avatar.legs.forEach((l,i)=>l.rotation.x = Math.sin(elapsed*8+i*Math.PI+Math.PI)*0.4);
+      } else {
+        remoteObj.avatar.arms.forEach(a => a.rotation.x = T.MathUtils.lerp(a.rotation.x, 0, blend));
+        remoteObj.avatar.legs.forEach(l => l.rotation.x = T.MathUtils.lerp(l.rotation.x, 0, blend));
+      }
+    }
+
+    // Check recent reactions for this member
+    if(p.reactions && p.reactions.length > 0){
+      const memberReaction = p.reactions.filter(r => r.from === mem.name).slice(-1)[0];
+      if(memberReaction && memberReaction.id !== remoteObj.lastReactionId){
+        remoteObj.lastReactionId = memberReaction.id;
+        remoteObj.reactionStart = t;
+        remoteObj.emojiTag.ctx.clearRect(0,0,128,128);
+        remoteObj.emojiTag.ctx.fillText(memberReaction.emoji, 64, 64);
+        remoteObj.emojiTag.tex.needsUpdate = true;
+        remoteObj.emojiTag.sprite.visible = true;
+      }
+    }
+
+    // Animate member's floating emoji
+    if(remoteObj.reactionStart && remoteObj.reactionStart > 0){
+      const progress = (t - remoteObj.reactionStart) / 2500;
+      if(progress <= 1){
+        remoteObj.emojiTag.sprite.visible = true;
+        remoteObj.emojiTag.sprite.position.y = 2.2 + progress * 0.9;
+        remoteObj.emojiTag.sprite.scale.setScalar(0.7 * Math.sin(progress * Math.PI));
+        remoteObj.emojiTag.mat.opacity = 1 - Math.pow(progress, 2);
+      } else {
+        remoteObj.emojiTag.sprite.visible = false;
+        remoteObj.reactionStart = 0;
+      }
+    }
+  }
+
   if(p.video!==video){
    texture?.dispose();video=p.video??null;texture=video?new T.VideoTexture(video):null;
    if(texture){texture.colorSpace=T.SRGBColorSpace;texture.minFilter=T.LinearFilter;texture.magFilter=T.LinearFilter;}
@@ -155,7 +406,18 @@ export default function Theatre(props:TheatreProps){
   renderer.render(scene,camera);count++;if(t-fpsAt>1000){p.onFps?.(Math.round(count*1000/(t-fpsAt)));count=0;fpsAt=t;}
  }
  id=requestAnimationFrame(frame);
- return()=>{cancelAnimationFrame(id);observer.disconnect();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',down);renderer.domElement.removeEventListener('pointermove',move);renderer.domElement.removeEventListener('pointerup',up);renderer.domElement.removeEventListener('pointercancel',up);renderer.domElement.removeEventListener('wheel',wheel);const gs=new Set<T.BufferGeometry>(),ms=new Set<T.Material>(),ts=new Set<T.Texture>();scene.traverse(o=>{if(o instanceof T.Mesh){gs.add(o.geometry);for(const m of Array.isArray(o.material)?o.material:[o.material]){ms.add(m);if('map'in m&&m.map)ts.add(m.map as T.Texture);}}});gs.forEach(g=>g.dispose());ms.forEach(m=>m.dispose());ts.add(room.welcome);if(texture)ts.add(texture);ts.forEach(tx=>tx.dispose());renderer.dispose();renderer.domElement.remove();};
+ return()=>{
+  cancelAnimationFrame(id);observer.disconnect();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',down);renderer.domElement.removeEventListener('pointermove',move);renderer.domElement.removeEventListener('pointerup',up);renderer.domElement.removeEventListener('pointercancel',up);renderer.domElement.removeEventListener('wheel',wheel);
+  for(const remoteObj of remoteAvatars.values()){
+    scene.remove(remoteObj.avatar.root);
+    remoteObj.nameTag.tex.dispose();
+    remoteObj.nameTag.mat.dispose();
+    remoteObj.emojiTag.tex.dispose();
+    remoteObj.emojiTag.mat.dispose();
+  }
+  remoteAvatars.clear();
+  const gs=new Set<T.BufferGeometry>(),ms=new Set<T.Material>(),ts=new Set<T.Texture>();scene.traverse(o=>{if(o instanceof T.Mesh){gs.add(o.geometry);for(const m of Array.isArray(o.material)?o.material:[o.material]){ms.add(m);if('map'in m&&m.map)ts.add(m.map as T.Texture);}}});gs.forEach(g=>g.dispose());ms.forEach(m=>m.dispose());ts.add(room.welcome);if(texture)ts.add(texture);ts.forEach(tx=>tx.dispose());renderer.dispose();renderer.domElement.remove();
+ };
  },[]);
  return <div className="three-host cinema-viewport" ref={host} aria-label="Interactive 3D cinema. WASD to walk, drag to orbit, approach a chair and press E to sit."/>;
 }
