@@ -2,6 +2,7 @@
   "name": "site-creator-vinext-starter",
   "version": "0.1.0",
   "private": true,
+  "main": "main.cjs",
   "engines": {
     "node": ">=22.13.0"
   },
@@ -13,7 +14,33 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "vinext:dev": "node scripts/run-framework.mjs dev",
-    "vinext:build": "node scripts/run-framework.mjs build"
+    "vinext:build": "node scripts/run-framework.mjs build",
+    "app:dev": "concurrently \"npm run dev\" \"electron .\"",
+    "app:build": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "com.darlingcinemas.app",
+    "productName": "Darling Cinemas",
+    "directories": {
+      "output": "dist-app"
+    },
+    "win": {
+      "icon": "public/icon.png"
+    },
+    "files": [
+      "main.cjs",
+      "package.json",
+      ".next/**/*",
+      "public/**/*",
+      "!public/*.exe",
+      "node_modules/**/*",
+      "!node_modules/**/*.map",
+      "!node_modules/**/*.md"
+    ],
+    "asarUnpack": [
+      "node_modules/next",
+      "node_modules/@next"
+    ]
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -52,7 +79,10 @@
     "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "6.0.2",
     "@vitejs/plugin-rsc": "0.5.26",
+    "concurrently": "^10.0.5",
     "drizzle-kit": "0.31.10",
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3",
     "eslint": "9.39.4",
     "eslint-config-next": "16.3.4",
     "react-server-dom-webpack": "19.2.6",
@@ -61,6 +91,7 @@
     "typescript": "5.9.3",
     "vinext": "1.0.0-beta.5",
     "vite": "8.0.13",
+    "wait-on": "^9.5.1",
     "wrangler": "4.92.0"
   },
   "type": "module",

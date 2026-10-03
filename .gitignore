@@ -50,3 +50,13 @@ next-env.d.ts
 reference/
 
 *.tsbuildinfo
+
+# Electron build output (very large)
+/dist-app/
+
+# Installer binary (too large for GitHub ~600MB)
+public/*.exe
+
+# Temp media files from AI session
+public/media_*.png
+public/media_*.jpg

@@ -14,37 +14,48 @@ type Panel='player'|'profile'|'experience'|'seats'|'settings'|'party'|'entry'|nu
 const jackets=[['Sand','#d6cdb4'],['Burgundy','#803747'],['Sage','#87937b'],['Slate','#687781'],['Lilac','#a797af']];
 const time=(v:number)=>{if(!Number.isFinite(v))return '0:00';const s=Math.floor(v);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
 export default function Home(){
-  const media=useLocalVideo(),{isTouch}=useMobile();const [seat,setSeat]=useState<string|null>(null),[nearby,setNearby]=useState<string|null>(null),[panel,setPanel]=useState<Panel>(null),[selection,setSelection]=useState('B3'),[walking,setWalking]=useState(false),[walk,setWalk]=useState(0),[reset,setReset]=useState(0),[zoom,setZoom]=useState(false),[fps,setFps]=useState<number|null>(null),[quality,setQuality]=useState<'Performance'|'Adaptive'|'Ultra'>('Performance'),[reduced,setReduced]=useState(false),[highRefresh,setHighRefresh]=useState(false),[name,setName]=useState('Guest'),[jacket,setJacket]=useState(jackets[0][1]),[gender,setGender]=useState('Male'),[appState,setAppState]=useState<'BOOT'|'RESTORING_PROFILE'|'ONBOARDING'|'RETURNING_USER'|'THEATRE_LOADING'|'EXPLORING'>('BOOT'),[pwd,setPwd]=useState(''),[confirmPwd,setConfirmPwd]=useState(''),[route,setRoute]=useState<{id:string;request:number}|null>(null),[service,setService]=useState(0),[serviceState,setServiceState]=useState(''),[notice,setNotice]=useState(''),[dev,setDev]=useState(false),[camera,setCamera]=useState<CameraSettings>(defaultCamera),[videoTab,setVideoTab]=useState<'upload'|'link'|'share'>('upload'),[videoUrl,setVideoUrl]=useState('');
+  const media=useLocalVideo(),{isTouch}=useMobile();const [seat,setSeat]=useState<string|null>(null),[nearby,setNearby]=useState<string|null>(null),[panel,setPanel]=useState<Panel>(null),[selection,setSelection]=useState('B3'),[walking,setWalking]=useState(false),[walk,setWalk]=useState(0),[reset,setReset]=useState(0),[zoom,setZoom]=useState(false),[fps,setFps]=useState<number|null>(null),[quality,setQuality]=useState<'Performance'|'Adaptive'|'Ultra'>('Performance'),[reduced,setReduced]=useState(false),[highRefresh,setHighRefresh]=useState(false),[name,setName]=useState('Guest'),[jacket,setJacket]=useState(jackets[0][1]),[gender,setGender]=useState('Male'),[appState,setAppState]=useState<'INTRO'|'BOOT'|'LANDING'|'LOADING'|'RESTORING_PROFILE'|'ONBOARDING'|'RETURNING_USER'|'THEATRE_LOADING'|'EXPLORING'>('INTRO'),[pwd,setPwd]=useState(''),[confirmPwd,setConfirmPwd]=useState(''),[route,setRoute]=useState<{id:string;request:number}|null>(null),[service,setService]=useState(0),[serviceState,setServiceState]=useState(''),[notice,setNotice]=useState(''),[dev,setDev]=useState(false),[camera,setCamera]=useState<CameraSettings>(defaultCamera),[videoTab,setVideoTab]=useState<'upload'|'link'|'share'>('upload'),[videoUrl,setVideoUrl]=useState('');
   const [partyJoinCode, setPartyJoinCode] = useState('');
+  const [isDesktopApp, setIsDesktopApp] = useState(false);
   const input=useRef<HTMLInputElement>(null),move=useRef({x:0,y:0,magnitude:0}),dialog=useRef<HTMLDivElement>(null),lastFocus=useRef<HTMLElement|null>(null);
   const {showHUD,beginInteraction,endInteraction}=useAutoHide(media.isPlaying,!!seat);
   const watchParty = useWatchParty(media, name);
  useEffect(()=>{
+      if(typeof window !== 'undefined' && (window as any).process?.versions?.electron) {
+        setIsDesktopApp(true);
+      }
       setDev(process.env.NODE_ENV !== 'production' && new URLSearchParams(location.search).has('debug'));
-      setAppState('RESTORING_PROFILE');
       const prefs=darlingStorage.loadPreferences();
       if(prefs){
           if(prefs.quality)setQuality(prefs.quality);
           if(prefs.reducedMotion!==undefined)setReduced(prefs.reducedMotion);
           if(prefs.highRefresh!==undefined)setHighRefresh(prefs.highRefresh);
       }
-      const profile=sessionManager.restoreSession();
-      if(profile){
-          setName(profile.name);
-          setGender(profile.gender);
-          if(profile.jacket)setJacket(profile.jacket);
-          setAppState('RETURNING_USER');
-          setTimeout(()=>{
-              setAppState('THEATRE_LOADING');
-              setTimeout(()=>{
-                  setAppState('EXPLORING');
-                  setWalking(true);setWalk(v=>v+1);
-              }, 1500);
-          }, 1500);
-      }else{
-          setAppState('ONBOARDING');
-      }
+      // Show intro for 3s, then fade out over 0.8s, then switch to LANDING
+      const fadeTimer = setTimeout(()=>setAppState('LANDING'), 3800);
+      return ()=>clearTimeout(fadeTimer);
   },[]);
+  const enterFromLanding = () => {
+      setAppState('LOADING');
+      setTimeout(() => {
+          const profile=sessionManager.restoreSession();
+          if(profile){
+              setName(profile.name);
+              setGender(profile.gender);
+              if(profile.jacket)setJacket(profile.jacket);
+              setAppState('RETURNING_USER');
+              setTimeout(()=>{
+                  setAppState('THEATRE_LOADING');
+                  setTimeout(()=>{
+                      setAppState('EXPLORING');
+                      setWalking(true);setWalk(v=>v+1);
+                  }, 1500);
+              }, 1500);
+          }else{
+              setAppState('ONBOARDING');
+          }
+      }, 2500);
+  };
  useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(''),4000);return()=>clearTimeout(id);},[notice]);
  useEffect(()=>{if(panel){lastFocus.current=document.activeElement as HTMLElement;dialog.current?.querySelector<HTMLButtonElement>('button')?.focus();beginInteraction();}else{endInteraction();lastFocus.current?.focus();}return()=>{};},[panel]);
  const close=()=>setPanel(null);
@@ -65,7 +76,7 @@ export default function Home(){
   <section className="dc-stage">
    <Theatre seat={seat} video={media.videoElement} onSeat={id=>{setSeat(id);setRoute(null);}} onNearbySeat={setNearby} onFps={setFps} moveRef={move} isTouch={isTouch} onWalk={()=>setWalking(true)} walk={walk} reset={reset} zoom={zoom} jacket={jacket} name={name} gender={gender} lite={quality==='Performance'} quality={quality} blocked={!!panel || appState!=='EXPLORING'} cameraSettings={camera} reducedMotion={reduced} highRefresh={highRefresh} destination={route} onRouteCancel={()=>setRoute(null)} service={service} onServiceState={setServiceState}/>
 
-   {!walking&&!seat&&<div className="dc-hero"><span className="dc-eyebrow">THE OUTSIDE WORLD CAN WAIT</span><h1>The Darling Cinemas.</h1><p>Step inside. Settle in. Make a little room for a great story.</p></div>}
+   {appState === 'EXPLORING' && !walking && !seat && <div className="dc-hero"><h1>DARLING CINEMAS</h1><p>The Private Theatre Experience</p></div>}
    {(!seat||showHUD)&&<aside className="dc-controls" aria-label="Theatre controls" data-ui-control><button aria-label="Seat zoom" aria-pressed={zoom} onClick={()=>seat?setZoom(!zoom):setNotice('Sit down first, then use seat zoom to fill the screen.')}><Focus/></button><button aria-label="Search catalogue unavailable" disabled title="Movie catalogue is outside this local cinema"><Search/></button><button aria-label="Toggle performance mode" onClick={()=>setQuality(quality==='Performance'?'Adaptive':'Performance')} title={quality}><Gauge/></button></aside>}
    {(!seat||showHUD)&&<div className="dc-explore" data-ui-control>
     {!isTouch&&<div className="dc-keys">{seat?<><kbd>E</kbd> Stand anytime <kbd>Space</kbd> Play / pause</>:<><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> Move <span>◉ Drag to look</span><kbd>E</kbd> Sit / stand</>}</div>}
@@ -147,8 +158,52 @@ export default function Home(){
    <div className="dc-panel-footer">DARLING CINEMAS · THE PRIVATE CINEMA</div>
   </div></div>}
   {dev&&<details className="dc-debug"><summary>Camera tuning</summary><button onClick={()=>{stand();setRoute({id:"CANTEEN",request:Date.now()});}}>Walk to canteen (QA)</button><button onClick={()=>{setCamera(REFERENCE_GEOMETRY_VIEW);}}>Load Reference Camera</button><button onClick={async()=>{const response=await fetch("/qa/cinema-qa.mp4");load(new File([await response.blob()],"Generated QA clip.mp4",{type:"video/mp4"}));}}>Load generated QA clip</button>{Object.entries(camera).map(([key,value])=><label key={key}>{key}<input type="number" step={key==='sensitivity'?'.001':'.1'} value={value} onChange={e=>setCamera({...camera,[key]:+e.target.value})}/></label>)}</details>}
-  {appState !== 'EXPLORING' && <div className="dc-backdrop" style={{zIndex:100, transition: 'opacity 1.5s ease', opacity: appState==='THEATRE_LOADING'?0:1, backgroundColor: '#14120f', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-    <div className="dc-panel" style={{margin:'auto'}}>
+  {appState !== 'EXPLORING' && <div className="dc-backdrop" style={{zIndex:100, transition: 'opacity 1.5s ease', opacity: appState==='THEATRE_LOADING'?0:1, backgroundColor: appState==='INTRO'||appState==='LANDING'||appState==='LOADING'?'transparent':'#14120f', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+    <div className={appState === 'INTRO' || appState === 'LANDING' || appState === 'LOADING' ? "dc-landing-container" : "dc-panel"} style={{margin:'auto'}}>
+
+      {/* INTRO: exact image full-screen, no fade, with loading bar */}
+      {appState === 'INTRO' && (
+        <div className="dc-intro-fullscreen">
+          <img src="/Application intro.jpeg" alt="Darling Cinemas Intro" className="dc-intro-image" />
+          <div className="dc-intro-bar-wrap">
+            <div className="dc-intro-bar-track">
+              <div className="dc-intro-bar-fill"></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {(appState === 'LANDING' || appState === 'LOADING') && (
+        <div className="dc-landing-content">
+          <div className="dc-landing-logo-container">
+            <h1 className="dc-landing-logo">
+              DARLING
+            </h1>
+            <p className="dc-landing-subtitle">C I N E M A S</p>
+            <p className="dc-landing-caption">PRIVATE ONLINE THEATRE</p>
+          </div>
+
+          {appState === 'LANDING' ? (
+            <div className="dc-landing-buttons">
+              {!isDesktopApp && (
+                <a href="/Darling Cinemas Setup 0.1.0.exe" download className="dc-btn-primary">
+                   <svg className="dc-icon" viewBox="0 0 24 24" fill="currentColor" style={{marginRight: '8px', width: '18px', height: '18px'}}><path d="M2.5 11V5l8-1v7H2.5zm9 0V3.5l10-1.5V11h-10zm-9 1v6l8 1v-7H2.5zm9 0v7l10 1.5V12h-10z"/></svg>
+                   Download for Windows
+                   <span className="dc-arrow">→</span>
+                </a>
+              )}
+              <button onClick={enterFromLanding} className={isDesktopApp ? "dc-btn-primary" : "dc-btn-secondary"}>
+                 <svg className="dc-icon play-icon" viewBox="0 0 24 24" fill="currentColor" style={{marginRight: '8px', width: '18px', height: '18px', color: isDesktopApp ? '#fff' : '#ff6633'}}><path d="M8 5v14l11-7z"/></svg>
+                 Enter Screen
+              </button>
+            </div>
+          ) : (
+            <div className="dc-loading-bar-container">
+              <div className="dc-loading-bar-fill"></div>
+            </div>
+          )}
+        </div>
+      )}
       {appState === 'ONBOARDING' && (
         <>
           <span className="dc-eyebrow" style={{textAlign:'center', display:'block'}}>WELCOME TO DARLING CINEMAS</span>

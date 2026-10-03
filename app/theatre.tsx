@@ -10,7 +10,7 @@ export type TheatreProps={seat:string|null;video?:HTMLVideoElement|null;lite?:bo
 export default function Theatre(props:TheatreProps){
  const host=useRef<HTMLDivElement>(null),latest=useRef(props);latest.current=props;
  useEffect(()=>{if(!host.current)return;const el=host.current;el.style.backgroundColor='#14120f';let renderer:T.WebGLRenderer;
- try{renderer=new T.WebGLRenderer({antialias:true, alpha:true});}catch{el.textContent='This device could not start the 3D cinema. Please enable WebGL.';return;}
+ try{renderer=new T.WebGLRenderer({antialias:true, alpha:true, powerPreference:'high-performance', stencil:false, precision:'highp'});}catch{el.textContent='This device could not start the 3D cinema. Please enable WebGL.';return;}
  renderer.setClearColor('#14120f', 0);renderer.toneMapping=T.ACESFilmicToneMapping;renderer.toneMappingExposure=1.12;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFShadowMap;
  renderer.domElement.style.position='absolute';renderer.domElement.style.top='0';renderer.domElement.style.left='0';renderer.domElement.style.pointerEvents='auto';
  el.appendChild(renderer.domElement);
