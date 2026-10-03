@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { PartyMember, ChatMessage, PartyReaction, RoomState } from '../app/api/party/route';
+import type { PartyMember, ChatMessage, PartyReaction, RoomState, Signal } from '../app/api/party/route';
 
 export type { PartyMember, ChatMessage, PartyReaction };
 
@@ -8,13 +8,27 @@ const ICE_SERVERS: RTCConfiguration = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' }
   ]
 };
 
+const STORAGE_ROOM_KEY = 'darling_active_party_code';
+const STORAGE_HOST_KEY = 'darling_active_party_is_host';
+
 export function useWatchParty(media: any, userName: string) {
-  const [partyCode, setPartyCode] = useState<string | null>(null);
-  const [isHost, setIsHost] = useState(false);
+  const [partyCode, setPartyCode] = useState<string | null>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem(STORAGE_ROOM_KEY) || null;
+    }
+    return null;
+  });
+  const [isHost, setIsHost] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return sessionStorage.getItem(STORAGE_HOST_KEY) === 'true';
+    }
+    return false;
+  });
   const [guests, setGuests] = useState<string[]>([]);
   const [members, setMembers] = useState<PartyMember[]>([]);
   const [hostName, setHostName] = useState<string>('');
@@ -23,7 +37,6 @@ export function useWatchParty(media: any, userName: string) {
   const [reactions, setReactions] = useState<PartyReaction[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Keep fresh references to avoid stale closure issues in interval callbacks
   const mediaRef = useRef(media);
   useEffect(() => { mediaRef.current = media; }, [media]);
 
@@ -34,6 +47,9 @@ export function useWatchParty(media: any, userName: string) {
 
   const pcs = useRef<Map<string, RTCPeerConnection>>(new Map());
   const candidateQueue = useRef<Map<string, any[]>>(new Map());
+  const processedSignals = useRef<Set<string>>(new Set());
+  const consecutiveErrors = useRef<number>(0);
+
   const myPresenceRef = useRef<{
     seat: string | null;
     jacket?: string;
@@ -43,20 +59,49 @@ export function useWatchParty(media: any, userName: string) {
     isWalking?: boolean;
   }>({ seat: null });
 
+  // Update session storage whenever partyCode changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      if (partyCode) {
+        sessionStorage.setItem(STORAGE_ROOM_KEY, partyCode);
+        sessionStorage.setItem(STORAGE_HOST_KEY, isHost ? 'true' : 'false');
+      } else {
+        sessionStorage.removeItem(STORAGE_ROOM_KEY);
+        sessionStorage.removeItem(STORAGE_HOST_KEY);
+      }
+    }
+  }, [partyCode, isHost]);
+
   const sendSignal = async (to: string, data: any) => {
     if (!partyCode) return;
-    await fetch('/api/party', {
-      method: 'POST',
-      body: JSON.stringify({ action: 'signal', code: partyCode, guestName: assignedName.current, to, data })
-    }).catch(() => {});
+    try {
+      await fetch('/api/party', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'signal', code: partyCode, guestName: assignedName.current, to, data })
+      });
+    } catch {}
   };
 
   const createPeerConnection = (peerName: string) => {
+    // Close existing connection to peer if any
+    const existing = pcs.current.get(peerName);
+    if (existing) {
+      try { existing.close(); } catch {}
+    }
+
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         sendSignal(peerName, { candidate: event.candidate });
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        // Soft cleanup
+        pcs.current.delete(peerName);
       }
     };
 
@@ -85,6 +130,7 @@ export function useWatchParty(media: any, userName: string) {
     try {
       const res = await fetch('/api/party', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'create',
           guestName: userName,
@@ -106,6 +152,8 @@ export function useWatchParty(media: any, userName: string) {
         setMessages([]);
         setReactions([]);
         setError(null);
+        consecutiveErrors.current = 0;
+        processedSignals.current.clear();
         pcs.current.forEach(pc => pc.close());
         pcs.current.clear();
         candidateQueue.current.clear();
@@ -122,6 +170,7 @@ export function useWatchParty(media: any, userName: string) {
       const cleanCode = code.trim();
       const res = await fetch('/api/party', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'join',
           code: cleanCode,
@@ -147,6 +196,8 @@ export function useWatchParty(media: any, userName: string) {
         }
         if (data.messages) setMessages(data.messages);
         setError(null);
+        consecutiveErrors.current = 0;
+        processedSignals.current.clear();
         pcs.current.forEach(pc => pc.close());
         pcs.current.clear();
         candidateQueue.current.clear();
@@ -165,6 +216,7 @@ export function useWatchParty(media: any, userName: string) {
     if (partyCode) {
       await fetch('/api/party', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'leave', code: partyCode, guestName: assignedName.current }),
       }).catch(() => {});
     }
@@ -173,6 +225,7 @@ export function useWatchParty(media: any, userName: string) {
     setMembers([]);
     setMessages([]);
     setReactions([]);
+    processedSignals.current.clear();
     pcs.current.forEach(pc => pc.close());
     pcs.current.clear();
     candidateQueue.current.clear();
@@ -194,6 +247,7 @@ export function useWatchParty(media: any, userName: string) {
     try {
       await fetch('/api/party', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'chat',
           code: partyCode,
@@ -221,6 +275,7 @@ export function useWatchParty(media: any, userName: string) {
 
       await fetch('/api/party', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'reaction',
           code: partyCode,
@@ -234,10 +289,13 @@ export function useWatchParty(media: any, userName: string) {
     } catch {}
   };
 
-  const processSignals = async (signals: any[]) => {
+  const processSignals = async (signals: Signal[]) => {
     if (!signals || signals.length === 0) return;
     
     for (const signal of signals) {
+      if (processedSignals.current.has(signal.id)) continue;
+      processedSignals.current.add(signal.id);
+
       const peer = signal.from;
       const data = signal.data;
       
@@ -245,21 +303,22 @@ export function useWatchParty(media: any, userName: string) {
       
       if (data.offer) {
         if (!pc) pc = createPeerConnection(peer);
-        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer)).catch(()=>{});
         
         // Drain any queued ICE candidates that arrived before the offer
         const q = candidateQueue.current.get(peer) || [];
         for (const c of q) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{});
         candidateQueue.current.set(peer, []);
         
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        sendSignal(peer, { answer });
+        const answer = await pc.createAnswer().catch(()=>null);
+        if (answer) {
+          await pc.setLocalDescription(answer).catch(()=>{});
+          sendSignal(peer, { answer });
+        }
       } else if (data.answer) {
         if (pc) {
-          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer)).catch(()=>{});
           
-          // Drain any queued ICE candidates that arrived before the answer
           const q = candidateQueue.current.get(peer) || [];
           for (const c of q) await pc.addIceCandidate(new RTCIceCandidate(c)).catch(()=>{});
           candidateQueue.current.set(peer, []);
@@ -280,34 +339,32 @@ export function useWatchParty(media: any, userName: string) {
     const m = mediaRef.current;
     if (!m) return;
     
-    // If it is a web URL or internal streaming URL (/api/drive-stream, http...)
+    // Direct link or drive stream sync
     if (state.videoUrl && (state.videoUrl.startsWith('http') || state.videoUrl.startsWith('/api/')) && m.filename !== state.videoUrl && !m.filename?.includes('blob:')) {
       if (m.loadUrl) m.loadUrl(state.videoUrl);
     }
     
     if (m.videoElement) {
-      // If we are NOT receiving a WebRTC stream (direct URL sync)
       if (!m.videoElement.srcObject) {
         if (state.isPlaying && m.videoElement.paused) m.videoElement.play().catch(()=>{});
         if (!state.isPlaying && !m.videoElement.paused) m.videoElement.pause();
         
         const elapsedSinceUpdate = (Date.now() - state.lastUpdate) / 1000;
         const expectedTime = state.isPlaying ? state.currentTime + elapsedSinceUpdate : state.currentTime;
-        if (Math.abs(m.videoElement.currentTime - expectedTime) > 1.5) {
+        if (Math.abs(m.videoElement.currentTime - expectedTime) > 1.8) {
           m.seek(expectedTime);
         }
       }
     }
   };
 
-  // Host WebRTC streaming logic: continuously ensures all guests receive media tracks
+  // Host WebRTC streaming logic: continuously broadcast tracks to connected guests
   const setupHostStreams = useCallback(() => {
     if (!isHost || !partyCode) return;
     const m = mediaRef.current;
     const video = m?.videoElement as any;
     if (!video) return;
 
-    // Stream local files, blob URLs, or active screen sharing
     const shouldStream = (m.filename && !m.filename.startsWith('http') && !m.filename.startsWith('/api/')) || !!video.srcObject;
     
     if (shouldStream) {
@@ -323,26 +380,27 @@ export function useWatchParty(media: any, userName: string) {
       if (stream && stream.getTracks().length > 0) {
         guests.forEach(async (guest) => {
           let pc = pcs.current.get(guest);
-          if (!pc) {
+          if (!pc || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
             pc = createPeerConnection(guest);
             stream.getTracks().forEach((track: any) => {
               try { pc!.addTrack(track, stream); } catch {}
             });
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            sendSignal(guest, { offer });
+            const offer = await pc.createOffer().catch(()=>null);
+            if (offer) {
+              await pc.setLocalDescription(offer).catch(()=>{});
+              sendSignal(guest, { offer });
+            }
           }
         });
       }
     }
   }, [isHost, partyCode, guests]);
 
-  // Run stream setup whenever guests list, media filename, or playing state updates
   useEffect(() => {
     setupHostStreams();
   }, [setupHostStreams, media?.filename, media?.isPlaying, guests]);
 
-  // Sync Polling Loop
+  // Robust Heartbeat & Sync Loop
   useEffect(() => {
     if (!partyCode) return;
     
@@ -350,13 +408,13 @@ export function useWatchParty(media: any, userName: string) {
       try {
         const m = mediaRef.current;
         
-        // Push host playback update and local member presence update
         if (isHost) {
           const videoUrl = m.filename
             ? (m.filename.startsWith('http') || m.filename.startsWith('/api/') ? m.filename : `local:${m.filename}`)
             : '';
           await fetch('/api/party', {
             method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'update',
               code: partyCode,
@@ -368,13 +426,13 @@ export function useWatchParty(media: any, userName: string) {
             })
           }).catch(()=>{});
 
-          // Also trigger stream check for any pending guests
           setupHostStreams();
         }
 
-        // Send periodic member presence heartbeat
+        // Heartbeat & Member Presence
         await fetch('/api/party', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             action: 'update_member',
             code: partyCode,
@@ -383,9 +441,10 @@ export function useWatchParty(media: any, userName: string) {
           })
         }).catch(()=>{});
 
-        // Poll room state
+        // Poll Room State
         const res = await fetch(`/api/party?code=${partyCode}&user=${assignedName.current}`);
         if (res.ok) {
+          consecutiveErrors.current = 0;
           const data = await res.json() as any;
           setHostName(data.host || '');
           setGuests(data.guests || []);
@@ -401,15 +460,19 @@ export function useWatchParty(media: any, userName: string) {
             setHostVideoUrl(data.videoUrl || '');
             syncMediaToState(data);
           }
-          processSignals(data.signals);
+          if (data.signals) processSignals(data.signals);
         } else if (res.status === 404) {
-          leaveParty();
-          setError('Party room was closed.');
+          consecutiveErrors.current += 1;
+          // Only leave if 8 consecutive polls fail (8+ seconds)
+          if (consecutiveErrors.current >= 8) {
+            leaveParty();
+            setError('Party room was closed.');
+          }
         }
       } catch (err) {
-        // Ignore background polling network glitches
+        // Network glitches won't terminate party
       }
-    }, 1000);
+    }, 1200);
 
     return () => clearInterval(interval);
   }, [partyCode, isHost, setupHostStreams]);

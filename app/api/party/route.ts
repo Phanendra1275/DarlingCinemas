@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server';
 
-// Use a global variable to persist state in development across hot reloads
+// Global state persisting across requests and hot reloads
 const globalRooms = global as any;
 if (!globalRooms.watchParties) {
-  globalRooms.watchParties = new Map();
+  globalRooms.watchParties = new Map<string, RoomState>();
 }
 
 export type Signal = {
+  id: string;
   to: string;
   from: string;
   data: any;
+  timestamp: number;
 };
 
 export type PartyMember = {
@@ -41,6 +43,7 @@ export type PartyReaction = {
 };
 
 export type RoomState = {
+  code: string;
   host: string;
   guests: string[];
   members: Record<string, PartyMember>;
@@ -48,6 +51,7 @@ export type RoomState = {
   isPlaying: boolean;
   currentTime: number;
   lastUpdate: number;
+  createdAt: number;
   signals: Signal[];
   messages: ChatMessage[];
   reactions: PartyReaction[];
@@ -55,56 +59,91 @@ export type RoomState = {
 
 const rooms: Map<string, RoomState> = globalRooms.watchParties;
 
-// Prune inactive members older than 15 seconds
-function cleanupInactiveMembers(room: RoomState) {
+// Housekeeping: Keep rooms alive for 24 hours. Member inactive grace period: 3 minutes.
+function pruneRooms() {
   const now = Date.now();
-  for (const [name, member] of Object.entries(room.members)) {
-    if (name !== room.host && now - member.lastSeen > 15000) {
-      delete room.members[name];
-      room.guests = room.guests.filter(g => g !== name);
+  for (const [code, room] of rooms.entries()) {
+    // Expire room only if completely untouched for 24 hours
+    if (now - room.lastUpdate > 24 * 60 * 60 * 1000) {
+      rooms.delete(code);
+      continue;
     }
+
+    // Clean up members inactive for more than 3 minutes (180,000 ms)
+    for (const [name, member] of Object.entries(room.members)) {
+      if (name !== room.host && now - member.lastSeen > 180000) {
+        delete room.members[name];
+        room.guests = room.guests.filter(g => g !== name);
+      }
+    }
+
+    // Keep only signals from the last 45 seconds
+    room.signals = room.signals.filter(s => now - s.timestamp < 45000);
+
+    // Keep reactions from the last 15 seconds
+    room.reactions = room.reactions.filter(r => now - r.timestamp < 15000);
   }
 }
 
 export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const code = url.searchParams.get('code');
-  const user = url.searchParams.get('user');
-  
-  if (!code || !rooms.has(code)) {
-    return NextResponse.json({ error: 'Room not found' }, { status: 404 });
-  }
-  
-  const room = rooms.get(code)!;
-  cleanupInactiveMembers(room);
-  
-  // Touch user's lastSeen if present
-  if (user && room.members[user]) {
-    room.members[user].lastSeen = Date.now();
-  }
+  try {
+    pruneRooms();
+    const url = new URL(req.url);
+    const code = url.searchParams.get('code');
+    const user = url.searchParams.get('user');
+    
+    if (!code || !rooms.has(code)) {
+      return NextResponse.json({ error: 'Room not found' }, { status: 404 });
+    }
+    
+    const room = rooms.get(code)!;
+    room.lastUpdate = Date.now();
+    
+    // Refresh user's lastSeen timestamp
+    if (user) {
+      if (room.members[user]) {
+        room.members[user].lastSeen = Date.now();
+      } else if (user === room.host || room.guests.includes(user)) {
+        room.members[user] = {
+          name: user,
+          jacket: '#d6cdb4',
+          gender: 'Male',
+          seat: null,
+          lastSeen: Date.now(),
+        };
+      }
+    }
 
-  // Extract signals meant for this user
-  let userSignals: Signal[] = [];
-  if (user) {
-    userSignals = room.signals.filter(s => s.to === user);
-    room.signals = room.signals.filter(s => s.to !== user); // Consume signals
+    // Return signals targeted for this user
+    let userSignals: Signal[] = [];
+    if (user) {
+      userSignals = room.signals.filter(s => s.to === user);
+    }
+
+    const now = Date.now();
+    const recentReactions = room.reactions.filter(r => now - r.timestamp < 8000);
+
+    return NextResponse.json({
+      code: room.code,
+      host: room.host,
+      guests: room.guests,
+      videoUrl: room.videoUrl,
+      isPlaying: room.isPlaying,
+      currentTime: room.currentTime,
+      lastUpdate: room.lastUpdate,
+      signals: userSignals,
+      reactions: recentReactions,
+      members: room.members,
+      messages: room.messages.slice(-60),
+    });
+  } catch (err) {
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
-
-  // Only keep recent reactions from the last 6 seconds
-  const now = Date.now();
-  const recentReactions = room.reactions.filter(r => now - r.timestamp < 6000);
-
-  return NextResponse.json({
-    ...room,
-    signals: userSignals,
-    reactions: recentReactions,
-    members: room.members,
-    messages: room.messages.slice(-50), // Last 50 messages
-  });
 }
 
 export async function POST(req: Request) {
   try {
+    pruneRooms();
     const body = await req.json();
     const { action, code, state, guestName, memberData, message, reaction } = body as any;
     
@@ -122,7 +161,8 @@ export async function POST(req: Request) {
         lastSeen: Date.now(),
       };
 
-      rooms.set(newCode, {
+      const newRoom: RoomState = {
+        code: newCode,
         host: hostName,
         guests: [],
         members: { [hostName]: initialMember },
@@ -130,18 +170,21 @@ export async function POST(req: Request) {
         isPlaying: false,
         currentTime: 0,
         lastUpdate: Date.now(),
+        createdAt: Date.now(),
         signals: [],
         messages: [
           {
             id: `sys-${Date.now()}`,
             from: 'System',
             seat: null,
-            text: `Welcome to Darling Cinemas private screen! Room Code: ${newCode}`,
+            text: `🎬 Private Cinema Room #${newCode} created. Invite your friends!`,
             timestamp: Date.now(),
           }
         ],
         reactions: [],
-      });
+      };
+
+      rooms.set(newCode, newRoom);
       return NextResponse.json({ code: newCode, assignedName: hostName });
     }
     
@@ -150,14 +193,12 @@ export async function POST(req: Request) {
     }
     
     const room = rooms.get(code)!;
+    room.lastUpdate = Date.now();
 
     if (action === 'join') {
       let finalName = guestName || 'Guest';
-      while (room.host === finalName || room.guests.includes(finalName)) {
-        finalName = `${guestName} ${Math.floor(Math.random() * 1000)}`;
-      }
-      
-      if (!room.guests.includes(finalName)) {
+      // If returning with the same name, reuse it
+      if (room.host !== finalName && !room.guests.includes(finalName)) {
         room.guests.push(finalName);
       }
 
@@ -172,12 +213,12 @@ export async function POST(req: Request) {
         lastSeen: Date.now(),
       };
 
-      // Add join announcement to chat
+      // Add join announcement
       room.messages.push({
-        id: `sys-${Date.now()}`,
+        id: `sys-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
         from: 'System',
-        seat: null,
-        text: `${finalName} joined the cinema room.`,
+        seat: memberData?.seat || null,
+        text: `🎟️ ${finalName} joined the cinema room.`,
         timestamp: Date.now(),
       });
 
@@ -230,7 +271,7 @@ export async function POST(req: Request) {
           timestamp: Date.now(),
         };
         room.messages.push(newMsg);
-        if (room.messages.length > 60) room.messages.shift();
+        if (room.messages.length > 80) room.messages.shift();
       }
       return NextResponse.json({ success: true });
     }
@@ -245,21 +286,33 @@ export async function POST(req: Request) {
           timestamp: Date.now(),
         };
         room.reactions.push(newReaction);
-        if (room.reactions.length > 30) room.reactions.shift();
+        if (room.reactions.length > 40) room.reactions.shift();
       }
       return NextResponse.json({ success: true });
     }
     
     if (action === 'signal') {
       const { to, data } = body as any;
-      room.signals.push({ to, from: guestName, data });
+      room.signals.push({
+        id: `sig-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+        to,
+        from: guestName,
+        data,
+        timestamp: Date.now()
+      });
       return NextResponse.json({ success: true });
     }
 
     if (action === 'leave') {
       if (guestName === room.host) {
-        // Close room if host leaves
-        rooms.delete(code);
+        // Keep room alive for 1 hour even if host leaves so host can reload/rejoin without losing party
+        room.messages.push({
+          id: `sys-${Date.now()}`,
+          from: 'System',
+          seat: null,
+          text: `Host left the room. Room code is still valid.`,
+          timestamp: Date.now(),
+        });
       } else {
         room.guests = room.guests.filter(g => g !== guestName);
         delete room.members[guestName];
