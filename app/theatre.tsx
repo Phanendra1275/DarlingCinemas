@@ -3,6 +3,8 @@ import {useEffect,useRef} from 'react';
 import * as T from 'three';
 import {buildCinema,createAvatar,floorHeight,seats,SCREEN,THEATRE_CONFIG,createSnacks} from './cinema-scene';
 import type { PartyMember, PartyReaction } from '../hooks/use-watch-party';
+import { CinemaMultiplayer } from '../src/cinema/CinemaMultiplayer';
+import { partyService } from '../src/services/partyService';
 
 export type CameraSettings={fov:number;distance:number;height:number;pitch:number;targetHeight:number;sideOffset:number;damping:number;sensitivity:number;heroX:number;heroY:number;heroZ:number;targetX:number;targetY:number;targetZ:number;yaw:number;collisionDistance:number};
 export const defaultCamera:CameraSettings={fov:64,distance:3.2,height:.65,pitch:.04,targetHeight:1.35,sideOffset:0,damping:7,sensitivity:.003,heroX:6.85,heroY:4.2,heroZ:7.2,targetX:-.65,targetY:1,targetZ:-2.5,yaw:0,collisionDistance:.18};
@@ -36,6 +38,11 @@ export type TheatreProps={
   onPlayerPresence?:(presence: { position: { x: number; y: number; z: number }; rotation: number; isWalking: boolean }) => void;
   name?:string;
   gender?:string;
+  partyCode?:string|null;
+  isHost?:boolean;
+  onToast?:(msg:string)=>void;
+  onTriggerWalkToSeat?:(seatId:string)=>void;
+  cinemaMultiplayerRef?:React.MutableRefObject<CinemaMultiplayer|null>;
 };
 
 function createBillboardSprite(text: string) {
@@ -152,15 +159,32 @@ export default function Theatre(props:TheatreProps){
  function blocked(x:number,z:number){return (z>14.1&&x>-2.5&&x<4.6)||(z>9.7&&z<10.3&&x<5.6)||seats.some(s=>Math.abs(x-s.position.x)<1.19&&z>s.position.z-1.55&&z<s.position.z+1.17);}
   const down=(e:PointerEvent)=>{if(listener.context.state==='suspended')listener.context.resume();if(latest.current.blocked||pointer!==null)return;pointer=e.pointerId;px=e.clientX;py=e.clientY;dragged=false;renderer.domElement.setPointerCapture(pointer);};
  const move=(e:PointerEvent)=>{if(pointer!==e.pointerId)return;const dx=e.clientX-px,dy=e.clientY-py;dragged=dragged||Math.abs(dx)+Math.abs(dy)>3;if(dragged){startWalk();const cfg=latest.current.cameraSettings??defaultCamera;yaw-=dx*cfg.sensitivity;pitch=T.MathUtils.clamp(pitch+dy*cfg.sensitivity,-.25,.7);}px=e.clientX;py=e.clientY;};
- const up=(e:PointerEvent)=>{if(pointer!==e.pointerId)return;pointer=null;if(renderer.domElement.hasPointerCapture(e.pointerId))renderer.domElement.releasePointerCapture(e.pointerId);if(!dragged&&!latest.current.seat&&lastNearby){const bounds=renderer.domElement.getBoundingClientRect();const ray=new T.Raycaster();ray.setFromCamera(new T.Vector2((e.clientX-bounds.left)/bounds.width*2-1,-(e.clientY-bounds.top)/bounds.height*2+1),camera);const hit=ray.intersectObjects(room.chairs,true)[0];if(hit){let item:T.Object3D|null=hit.object;while(item&&!item.userData.seat)item=item.parent;if(item?.userData.seat===lastNearby)latest.current.onSeat?.(lastNearby);}}};
+ const up=(e:PointerEvent)=>{if(pointer!==e.pointerId)return;pointer=null;if(renderer.domElement.hasPointerCapture(e.pointerId))renderer.domElement.releasePointerCapture(e.pointerId);if(!dragged&&!latest.current.seat&&lastNearby){const bounds=renderer.domElement.getBoundingClientRect();const ray=new T.Raycaster();ray.setFromCamera(new T.Vector2((e.clientX-bounds.left)/bounds.width*2-1,-(e.clientY-bounds.top)/bounds.height*2+1),camera);const hit=ray.intersectObjects(room.chairs,true)[0];if(hit){let item:T.Object3D|null=hit.object;while(item&&!item.userData.seat)item=item.parent;if(item?.userData.seat===lastNearby){if(partyService.getActiveRoom()){multiplayer.requestSeatReservation(lastNearby);}else{latest.current.onSeat?.(lastNearby);}}}}};
  const keydown=(e:KeyboardEvent)=>{if(listener.context.state==='suspended')listener.context.resume();if(latest.current.blocked||(e.target as HTMLElement).closest('input,textarea,select,button,[role="dialog"]'))return;const k=e.key.toLowerCase();if(['w','a','s','d'].includes(k)){e.preventDefault();keys.add(k);if(!latest.current.seat)startWalk();}};
  const keyup=(e:KeyboardEvent)=>keys.delete(e.key.toLowerCase());const blur=()=>{keys.clear();velocity.set(0,0);};
  const wheel=(e:WheelEvent)=>{if(latest.current.blocked)return;e.preventDefault();distance=T.MathUtils.clamp(distance+e.deltaY*.004,1.8,6);};
  renderer.domElement.addEventListener('pointerdown',down);renderer.domElement.addEventListener('pointermove',move);renderer.domElement.addEventListener('pointerup',up);renderer.domElement.addEventListener('pointercancel',up);renderer.domElement.addEventListener('wheel',wheel,{passive:false});window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);
  const resize=()=>{const w=el.clientWidth,h=el.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);};const observer=new ResizeObserver(resize);observer.observe(el);resize();
 
- // Multiplayer remote avatars collection
- const remoteAvatars = new Map<string, RemoteAvatarObject>();
+ // Cinema Multiplayer manager
+ const multiplayer = new CinemaMultiplayer({
+  scene,
+  onToast: (msg) => latest.current.onToast?.(msg),
+  onTriggerWalkToSeat: (seatId) => {
+    if (latest.current.onTriggerWalkToSeat) {
+      latest.current.onTriggerWalkToSeat(seatId);
+    } else {
+      latest.current.onSeat?.(seatId);
+    }
+  },
+  onSitConfirmed: (seatId) => {
+    latest.current.onSeat?.(seatId);
+  }
+ });
+ if (latest.current.cinemaMultiplayerRef) {
+  latest.current.cinemaMultiplayerRef.current = multiplayer;
+ }
+ multiplayer.attachToRoom();
 
  let id=0,last=performance.now(),fpsAt=last,count=0,previousSettings=props.cameraSettings,lastPresencePush=0;
 
@@ -230,111 +254,11 @@ export default function Theatre(props:TheatreProps){
     }
   }
 
-  // Sync Multiplayer 3D Avatars
-  const activeMembers = p.members || [];
-  const currentMemberNames = new Set(activeMembers.map(m => m.name));
-
-  // Remove disconnected members
-  for(const [memName, remoteObj] of remoteAvatars.entries()){
-    if(!currentMemberNames.has(memName)){
-      scene.remove(remoteObj.avatar.root);
-      remoteObj.nameTag.tex.dispose();
-      remoteObj.nameTag.mat.dispose();
-      remoteObj.emojiTag.tex.dispose();
-      remoteObj.emojiTag.mat.dispose();
-      remoteAvatars.delete(memName);
-    }
-  }
-
-  // Create or Update Remote Avatars
-  for(const mem of activeMembers){
-    let remoteObj = remoteAvatars.get(mem.name);
-    if(!remoteObj){
-      const newAvatar = createAvatar(mem.jacket || '#803747', mem.gender || 'Male');
-      const nameTag = createBillboardSprite(mem.seat ? `[${mem.seat}] ${mem.name}` : mem.name);
-      const emojiTag = createEmojiSprite('🍿');
-      newAvatar.root.add(nameTag.sprite);
-      newAvatar.root.add(emojiTag.sprite);
-      scene.add(newAvatar.root);
-
-      remoteObj = {
-        name: mem.name,
-        jacketColor: mem.jacket || '#803747',
-        gender: mem.gender || 'Male',
-        avatar: newAvatar,
-        nameTag,
-        emojiTag,
-        currentPos: new T.Vector3(mem.position?.x ?? 6.45, mem.position?.y ?? 0.32, mem.position?.z ?? 5.9),
-        targetPos: new T.Vector3(mem.position?.x ?? 6.45, mem.position?.y ?? 0.32, mem.position?.z ?? 5.9),
-        yaw: mem.rotation ?? 0,
-        targetYaw: mem.rotation ?? 0,
-      };
-      remoteObj.avatar.root.position.copy(remoteObj.currentPos);
-      remoteAvatars.set(mem.name, remoteObj);
-    }
-
-    // Update jacket color if changed
-    if(mem.jacket && mem.jacket !== remoteObj.jacketColor){
-      remoteObj.jacketColor = mem.jacket;
-      remoteObj.avatar.jacket.color.set(mem.jacket);
-    }
-
-    // Sitting in seat or walking?
-    if(mem.seat){
-      const s = seats.find(st => st.id === mem.seat);
-      if(s){
-        remoteObj.avatar.root.position.lerp(s.sitPosition, blend);
-        remoteObj.avatar.root.rotation.y = 0;
-        remoteObj.avatar.legs.forEach(l => l.rotation.x = T.MathUtils.lerp(l.rotation.x, 1.4, blend));
-        remoteObj.avatar.knees.forEach(k => k.rotation.x = T.MathUtils.lerp(k.rotation.x, -1.4, blend));
-        remoteObj.avatar.arms.forEach(a => a.rotation.x = -0.35);
-      }
-    } else {
-      // Walking / Standing in theatre
-      if(mem.position){
-        remoteObj.targetPos.set(mem.position.x, mem.position.y, mem.position.z);
-        remoteObj.avatar.root.position.lerp(remoteObj.targetPos, blend);
-      }
-      if(mem.rotation !== undefined){
-        remoteObj.avatar.root.rotation.y = T.MathUtils.lerp(remoteObj.avatar.root.rotation.y, mem.rotation, blend);
-      }
-      remoteObj.avatar.knees.forEach(k => k.rotation.x = T.MathUtils.lerp(k.rotation.x, 0, blend));
-      
-      if(mem.isWalking){
-        remoteObj.avatar.arms.forEach((a,i)=>a.rotation.x = Math.sin(elapsed*8+i*Math.PI)*0.45);
-        remoteObj.avatar.legs.forEach((l,i)=>l.rotation.x = Math.sin(elapsed*8+i*Math.PI+Math.PI)*0.4);
-      } else {
-        remoteObj.avatar.arms.forEach(a => a.rotation.x = T.MathUtils.lerp(a.rotation.x, 0, blend));
-        remoteObj.avatar.legs.forEach(l => l.rotation.x = T.MathUtils.lerp(l.rotation.x, 0, blend));
-      }
-    }
-
-    // Check recent reactions for this member
-    if(p.reactions && p.reactions.length > 0){
-      const memberReaction = p.reactions.filter(r => r.from === mem.name).slice(-1)[0];
-      if(memberReaction && memberReaction.id !== remoteObj.lastReactionId){
-        remoteObj.lastReactionId = memberReaction.id;
-        remoteObj.reactionStart = t;
-        remoteObj.emojiTag.ctx.clearRect(0,0,128,128);
-        remoteObj.emojiTag.ctx.fillText(memberReaction.emoji, 64, 64);
-        remoteObj.emojiTag.tex.needsUpdate = true;
-        remoteObj.emojiTag.sprite.visible = true;
-      }
-    }
-
-    // Animate member's floating emoji
-    if(remoteObj.reactionStart && remoteObj.reactionStart > 0){
-      const progress = (t - remoteObj.reactionStart) / 2500;
-      if(progress <= 1){
-        remoteObj.emojiTag.sprite.visible = true;
-        remoteObj.emojiTag.sprite.position.y = 2.2 + progress * 0.9;
-        remoteObj.emojiTag.sprite.scale.setScalar(0.7 * Math.sin(progress * Math.PI));
-        remoteObj.emojiTag.mat.opacity = 1 - Math.pow(progress, 2);
-      } else {
-        remoteObj.emojiTag.sprite.visible = false;
-        remoteObj.reactionStart = 0;
-      }
-    }
+  // Sync Multiplayer 3D Avatars, Seats, and Video Playback
+  const localState = selected ? 'seated' : (isMoving ? 'walking' : 'standing');
+  multiplayer.update(dt, elapsed, player, avatar.root.rotation.y, pitch, localState);
+  if (video) {
+    multiplayer.syncVideoElement(video, latest.current.isHost ?? false);
   }
 
   if(p.video!==video){
@@ -408,14 +332,10 @@ export default function Theatre(props:TheatreProps){
  id=requestAnimationFrame(frame);
  return()=>{
   cancelAnimationFrame(id);observer.disconnect();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',down);renderer.domElement.removeEventListener('pointermove',move);renderer.domElement.removeEventListener('pointerup',up);renderer.domElement.removeEventListener('pointercancel',up);renderer.domElement.removeEventListener('wheel',wheel);
-  for(const remoteObj of remoteAvatars.values()){
-    scene.remove(remoteObj.avatar.root);
-    remoteObj.nameTag.tex.dispose();
-    remoteObj.nameTag.mat.dispose();
-    remoteObj.emojiTag.tex.dispose();
-    remoteObj.emojiTag.mat.dispose();
+  multiplayer.dispose();
+  if (latest.current.cinemaMultiplayerRef) {
+    latest.current.cinemaMultiplayerRef.current = null;
   }
-  remoteAvatars.clear();
   const gs=new Set<T.BufferGeometry>(),ms=new Set<T.Material>(),ts=new Set<T.Texture>();scene.traverse(o=>{if(o instanceof T.Mesh){gs.add(o.geometry);for(const m of Array.isArray(o.material)?o.material:[o.material]){ms.add(m);if('map'in m&&m.map)ts.add(m.map as T.Texture);}}});gs.forEach(g=>g.dispose());ms.forEach(m=>m.dispose());ts.add(room.welcome);if(texture)ts.add(texture);ts.forEach(tx=>tx.dispose());renderer.dispose();renderer.domElement.remove();
  };
  },[]);
