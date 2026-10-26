@@ -6,8 +6,18 @@ const RTC_CONFIG: RTCConfiguration = {
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
     { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun.cloudflare.com:3478' }
-  ]
+    { urls: 'stun:stun.cloudflare.com:3478' },
+    {
+      urls: [
+        'turn:openrelay.metered.ca:80',
+        'turn:openrelay.metered.ca:443',
+        'turn:openrelay.metered.ca:443?transport=tcp'
+      ],
+      username: 'openrelay',
+      credential: 'openrelay'
+    }
+  ],
+  iceCandidatePoolSize: 10
 };
 
 export interface StreamManagerOptions {
@@ -17,6 +27,7 @@ export interface StreamManagerOptions {
 }
 
 function extractMediaStream(video: HTMLVideoElement): MediaStream | null {
+  if (!video) return null;
   if (video.srcObject instanceof MediaStream) {
     return video.srcObject;
   }
@@ -24,16 +35,42 @@ function extractMediaStream(video: HTMLVideoElement): MediaStream | null {
     return null;
   }
   try {
-    if ((video as any).captureStream) {
-      return (video as any).captureStream(30);
-    }
-    if ((video as any).mozCaptureStream) {
-      return (video as any).mozCaptureStream(30);
+    const fn = (video as any).captureStream || (video as any).mozCaptureStream;
+    if (typeof fn === 'function') {
+      const stream = fn.call(video, 30);
+      if (stream && stream.getTracks().length > 0) {
+        return stream;
+      }
     }
   } catch (err) {
     console.warn('captureStream error:', err);
   }
   return null;
+}
+
+function waitForIceGatheringComplete(pc: RTCPeerConnection, maxTimeoutMs = 1000): Promise<void> {
+  return new Promise((resolve) => {
+    if (pc.iceGatheringState === 'complete') {
+      resolve();
+      return;
+    }
+    let timer: any = null;
+    const checkState = () => {
+      if (pc.iceGatheringState === 'complete') {
+        cleanup();
+        resolve();
+      }
+    };
+    const cleanup = () => {
+      clearTimeout(timer);
+      pc.removeEventListener('icegatheringstatechange', checkState);
+    };
+    timer = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, maxTimeoutMs);
+    pc.addEventListener('icegatheringstatechange', checkState);
+  });
 }
 
 export class CinemaStreamManager {
@@ -44,12 +81,14 @@ export class CinemaStreamManager {
   private videoListenersCleanup: (() => void) | null = null;
   private unsubSignal: (() => void) | null = null;
   private unsubRoomChange: (() => void) | null = null;
+  private requestStreamTimer: any = null;
+  private hasReceivedStream = false;
   private options: StreamManagerOptions;
 
   constructor(options: StreamManagerOptions) {
     this.options = options;
 
-    // Listen for WebRTC signals (offers, answers, ICE candidates)
+    // Listen for WebRTC signals (offers, answers, ICE candidates, request_stream)
     this.unsubSignal = partyService.onSignal((fromUid, data) => {
       this.handleSignal(fromUid, data);
     });
@@ -58,6 +97,13 @@ export class CinemaStreamManager {
     this.unsubRoomChange = partyService.onRoomChange((code) => {
       if (!code) {
         this.closeAllConnections();
+        this.hasReceivedStream = false;
+        clearTimeout(this.requestStreamTimer);
+      } else if (partyService.getIsHost()) {
+        setTimeout(() => this.checkAndBroadcastLocalVideo(), 200);
+      } else {
+        this.hasReceivedStream = false;
+        setTimeout(() => this.requestStreamFromHost(), 300);
       }
     });
   }
@@ -107,27 +153,72 @@ export class CinemaStreamManager {
       const myUid = partyService.getUid();
       for (const guestUid of Object.keys(members)) {
         if (guestUid !== myUid) {
-          this.connectToGuest(guestUid, stream);
+          this.connectToGuest(guestUid, stream, false);
         }
       }
     }
   }
 
   public onMembersChanged(members: Record<string, any>) {
-    if (!partyService.getIsHost() || !this.currentStream) return;
-    const myUid = partyService.getUid();
-    for (const guestUid of Object.keys(members)) {
-      if (guestUid !== myUid && !this.peerConnections.has(guestUid)) {
-        this.connectToGuest(guestUid, this.currentStream);
+    if (partyService.getIsHost()) {
+      if (!this.currentStream && this.localVideo) {
+        this.currentStream = extractMediaStream(this.localVideo);
+      }
+      if (!this.currentStream) return;
+      const myUid = partyService.getUid();
+      for (const guestUid of Object.keys(members)) {
+        if (guestUid !== myUid) {
+          const pc = this.peerConnections.get(guestUid);
+          const needsConnect = !pc || pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected';
+          if (needsConnect) {
+            this.connectToGuest(guestUid, this.currentStream, false);
+          }
+        }
+      }
+    } else {
+      if (!this.hasReceivedStream) {
+        this.requestStreamFromHost();
       }
     }
   }
 
-  private async connectToGuest(guestUid: string, stream: MediaStream) {
+  public requestStreamFromHost() {
+    if (partyService.getIsHost() || !partyService.getActiveRoom()) return;
+    const members = partyService.getMembers();
+    const myUid = partyService.getUid();
+    let hostUid = partyService.getHostId();
+    if (!hostUid) {
+      const meta = partyService.getCurrentRoomMeta();
+      hostUid = meta?.hostId || null;
+    }
+    if (!hostUid) {
+      for (const uid of Object.keys(members)) {
+        if (uid !== myUid) {
+          hostUid = uid;
+          break;
+        }
+      }
+    }
+    if (hostUid && hostUid !== myUid) {
+      partyService.sendSignal(hostUid, { type: 'request_stream' });
+    }
+
+    // Schedule retry if stream not yet received
+    if (!this.hasReceivedStream) {
+      clearTimeout(this.requestStreamTimer);
+      this.requestStreamTimer = setTimeout(() => {
+        if (!this.hasReceivedStream && !partyService.getIsHost() && partyService.getActiveRoom()) {
+          this.requestStreamFromHost();
+        }
+      }, 3000);
+    }
+  }
+
+  private async connectToGuest(guestUid: string, stream: MediaStream, force = false) {
     if (guestUid === partyService.getUid()) return;
 
     let pc = this.peerConnections.get(guestUid);
-    if (pc && pc.connectionState !== 'closed' && pc.connectionState !== 'failed') {
+    if (pc && !force && pc.connectionState !== 'closed' && pc.connectionState !== 'failed' && pc.connectionState !== 'disconnected') {
       const senders = pc.getSenders();
       stream.getTracks().forEach(track => {
         const sender = senders.find(s => s.track?.kind === track.kind);
@@ -138,6 +229,11 @@ export class CinemaStreamManager {
         }
       });
       return;
+    }
+
+    if (pc) {
+      try { pc.close(); } catch {}
+      this.peerConnections.delete(guestUid);
     }
 
     pc = new RTCPeerConnection(RTC_CONFIG);
@@ -151,11 +247,13 @@ export class CinemaStreamManager {
         const offer = await pc.createOffer();
         if (pc.signalingState !== 'stable') return;
         await pc.setLocalDescription(offer);
+        await waitForIceGatheringComplete(pc, 1000);
+        const finalSdp = pc.localDescription?.sdp || offer.sdp;
         partyService.sendSignal(guestUid, {
           type: 'offer',
           offer: {
             type: offer.type,
-            sdp: offer.sdp
+            sdp: finalSdp
           }
         });
       } catch (err) {
@@ -199,6 +297,17 @@ export class CinemaStreamManager {
   private handleSignal(fromUid: string, data: any) {
     if (!data || typeof data !== 'object') return;
 
+    if (data.type === 'request_stream') {
+      if (partyService.getIsHost()) {
+        const stream = this.currentStream || (this.localVideo ? extractMediaStream(this.localVideo) : null);
+        if (stream) {
+          this.currentStream = stream;
+          this.connectToGuest(fromUid, stream, true);
+        }
+      }
+      return;
+    }
+
     if (data.type === 'offer' && data.offer) {
       this.handleOffer(fromUid, data.offer);
     } else if (data.type === 'answer' && data.answer) {
@@ -222,19 +331,19 @@ export class CinemaStreamManager {
     const remoteStream = new MediaStream();
 
     pc.ontrack = (event) => {
+      this.hasReceivedStream = true;
+      clearTimeout(this.requestStreamTimer);
+      let trackStream: MediaStream;
       if (event.streams && event.streams[0]) {
-        event.streams[0].getTracks().forEach(track => {
-          if (!remoteStream.getTracks().some(t => t.id === track.id)) {
-            remoteStream.addTrack(track);
-          }
-        });
-      } else if (event.track) {
+        trackStream = event.streams[0];
+      } else {
         if (!remoteStream.getTracks().some(t => t.id === event.track.id)) {
           remoteStream.addTrack(event.track);
         }
+        trackStream = remoteStream;
       }
       const media = partyService.getCurrentRoomMedia();
-      this.options.onRemoteStream(remoteStream, media?.title || 'Host Cinema Stream');
+      this.options.onRemoteStream(trackStream, media?.title || 'Host Cinema Stream');
     };
 
     pc.onicecandidate = (event) => {
@@ -254,6 +363,10 @@ export class CinemaStreamManager {
     pc.onconnectionstatechange = () => {
       if (pc?.connectionState === 'failed' || pc?.connectionState === 'closed') {
         this.peerConnections.delete(fromUid);
+        // If connection failed, trigger stream request retry
+        if (!this.hasReceivedStream) {
+          setTimeout(() => this.requestStreamFromHost(), 1000);
+        }
       }
     };
 
@@ -268,12 +381,14 @@ export class CinemaStreamManager {
 
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      await waitForIceGatheringComplete(pc, 1000);
+      const finalSdp = pc.localDescription?.sdp || answer.sdp;
 
       partyService.sendSignal(fromUid, {
         type: 'answer',
         answer: {
           type: answer.type,
-          sdp: answer.sdp
+          sdp: finalSdp
         }
       });
     } catch (err) {
@@ -328,6 +443,7 @@ export class CinemaStreamManager {
   }
 
   public destroy() {
+    clearTimeout(this.requestStreamTimer);
     this.cleanupVideoListeners();
     this.closeAllConnections();
     if (this.unsubSignal) {

@@ -125,6 +125,27 @@ export default function Home(){
       onMembers: (members) => {
         streamManagerRef.current?.onMembersChanged(members);
       },
+      onPlayback: (playback) => {
+        if (!partyService.getIsHost() && mediaRef.current.videoElement) {
+          const v = mediaRef.current.videoElement;
+          if (playback.playing && v.paused) {
+            v.play().catch(() => {
+              v.muted = true;
+              (v as any)._autoMuted = true;
+              v.play().catch(() => {});
+            });
+          } else if (!playback.playing && !v.paused) {
+            v.pause();
+          }
+          if (!(v.srcObject instanceof MediaStream) && Number.isFinite(playback.time)) {
+            const elapsed = playback.playing ? (Date.now() - playback.updatedAt) / 1000 * (playback.rate || 1.0) : 0;
+            const expected = playback.time + elapsed;
+            if (Math.abs(v.currentTime - expected) > 1.8) {
+              try { v.currentTime = expected; } catch {}
+            }
+          }
+        }
+      },
       onMedia: (roomMedia) => {
         if (roomMedia && roomMedia.streamUrl && !partyService.getIsHost()) {
           if (mediaRef.current.filename !== roomMedia.streamUrl) {
@@ -136,6 +157,13 @@ export default function Home(){
         }
       }
     });
+
+    if (partyService.getIsHost()) {
+      streamManagerRef.current?.checkAndBroadcastLocalVideo();
+    } else {
+      streamManagerRef.current?.requestStreamFromHost();
+    }
+
     return () => {
       unsub();
     };
@@ -398,7 +426,17 @@ export default function Home(){
      onToast={setNotice}
      onRoomChange={(code) => {
        setActivePartyCode(code);
-       setIsHost(partyService.getIsHost());
+       const host = partyService.getIsHost();
+       setIsHost(host);
+       if (host) {
+         setTimeout(() => {
+           streamManagerRef.current?.checkAndBroadcastLocalVideo();
+         }, 300);
+       } else {
+         setTimeout(() => {
+           streamManagerRef.current?.requestStreamFromHost();
+         }, 300);
+       }
      }}
    />
   {dev&&<details className="dc-debug"><summary>Camera tuning</summary><button onClick={()=>{stand();setRoute({id:"CANTEEN",request:Date.now()});}}>Walk to canteen (QA)</button><button onClick={()=>{setCamera(REFERENCE_GEOMETRY_VIEW);}}>Load Reference Camera</button><button onClick={async()=>{const response=await fetch("/qa/cinema-qa.mp4");load(new File([await response.blob()],"Generated QA clip.mp4",{type:"video/mp4"}));}}>Load generated QA clip</button>{Object.entries(camera).map(([key,value])=><label key={key}>{key}<input type="number" step={key==='sensitivity'?'.001':'.1'} value={value} onChange={e=>setCamera({...camera,[key]:+e.target.value})}/></label>)}</details>}

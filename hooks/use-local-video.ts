@@ -55,10 +55,32 @@ export function useLocalVideo(){
     events.forEach(e=>el.addEventListener(e,sync));
     el.addEventListener('canplay',ready);
     el.addEventListener('error',fail);
+
+    const unlockAutoplay = () => {
+      if (el) {
+        if (el.paused && (el.srcObject || el.src)) {
+          el.play().catch(() => {});
+        }
+        if (el.muted && (el as any)._autoMuted) {
+          el.muted = false;
+          (el as any)._autoMuted = false;
+          setIsMuted(false);
+        }
+      }
+    };
+    window.addEventListener('click', unlockAutoplay, { passive: true });
+    window.addEventListener('touchstart', unlockAutoplay, { passive: true });
+    window.addEventListener('pointerdown', unlockAutoplay, { passive: true });
+    window.addEventListener('keydown', unlockAutoplay, { passive: true });
+
     setVideoElement(el);
     return()=>{
       generation.current++;
       cancelCandidate.current?.();
+      window.removeEventListener('click', unlockAutoplay);
+      window.removeEventListener('touchstart', unlockAutoplay);
+      window.removeEventListener('pointerdown', unlockAutoplay);
+      window.removeEventListener('keydown', unlockAutoplay);
       events.forEach(e=>el.removeEventListener(e,sync));
       el.removeEventListener('canplay',ready);
       el.removeEventListener('error',fail);
@@ -98,6 +120,7 @@ export function useLocalVideo(){
       if(videoElement.paused){
         videoElement.play().catch(()=>{
           videoElement.muted=true;
+          (videoElement as any)._autoMuted = true;
           videoElement.play().catch(()=>{});
         });
       }
@@ -109,8 +132,9 @@ export function useLocalVideo(){
     streamRef.current=stream;
     videoElement.srcObject=stream;
     videoElement.play().catch(()=>{
-      // If browser blocks unmuted playback, try muted and notify
+      // If browser blocks unmuted playback, try muted and unlock on user gesture
       videoElement.muted=true;
+      (videoElement as any)._autoMuted = true;
       videoElement.play().catch(e=>console.warn('Playback gesture needed:',e));
     });
     setFilename(name);

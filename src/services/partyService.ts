@@ -861,6 +861,7 @@ export class PartyService {
 
   private cachedMembers: Record<string, RoomMember> = {};
   private cachedMedia: RoomMedia | null = null;
+  private cachedMeta: RoomMeta | null = null;
   private signalListeners: Set<(fromUid: string, signalData: any) => void> = new Set();
   private processedSignalIds: Set<string> = new Set();
   private activeSignalsUnsub: (() => void) | null = null;
@@ -1041,6 +1042,18 @@ export class PartyService {
       return this.localBridge.get('media') || null;
     }
     return this.cachedMedia;
+  }
+
+  public getCurrentRoomMeta(): RoomMeta | null {
+    if (this.useLocalFallback || !this.db) {
+      return this.localBridge.get('meta') || this.cachedMeta || null;
+    }
+    return this.cachedMeta;
+  }
+
+  public getHostId(): string | null {
+    const meta = this.getCurrentRoomMeta();
+    return meta?.hostId || null;
   }
 
   public sendSignal(toUid: string, signalData: any): void {
@@ -1764,7 +1777,10 @@ export class PartyService {
 
     if (this.useLocalFallback || !this.db) {
       const unsubs = [
-        this.localBridge.on('meta', (v) => v && listener.onMeta?.(v)),
+        this.localBridge.on('meta', (v) => {
+          this.cachedMeta = v || null;
+          v && listener.onMeta?.(v);
+        }),
         this.localBridge.on('media', (v) => {
           this.cachedMedia = v || null;
           if (v) listener.onMedia?.(v);
@@ -1807,7 +1823,11 @@ export class PartyService {
     const chatRef = ref(this.db, `rooms/${code}/chat`);
 
     const unsubMeta = onValue(metaRef, (s) => {
-      if (s.exists()) listener.onMeta?.(s.val() as RoomMeta);
+      if (s.exists()) {
+        const val = s.val() as RoomMeta;
+        this.cachedMeta = val;
+        listener.onMeta?.(val);
+      }
     });
     const unsubMedia = onValue(mediaRef, (s) => {
       if (s.exists()) {

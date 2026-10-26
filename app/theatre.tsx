@@ -164,6 +164,7 @@ export default function Theatre(props:TheatreProps){
  const keyup=(e:KeyboardEvent)=>keys.delete(e.key.toLowerCase());const blur=()=>{keys.clear();velocity.set(0,0);};
  const wheel=(e:WheelEvent)=>{if(latest.current.blocked)return;e.preventDefault();distance=T.MathUtils.clamp(distance+e.deltaY*.004,1.8,6);};
  renderer.domElement.addEventListener('pointerdown',down);renderer.domElement.addEventListener('pointermove',move);renderer.domElement.addEventListener('pointerup',up);renderer.domElement.addEventListener('pointercancel',up);renderer.domElement.addEventListener('wheel',wheel,{passive:false});window.addEventListener('keydown',keydown);window.addEventListener('keyup',keyup);window.addEventListener('blur',blur);
+ const resumeAudio=()=>{if(listener.context.state==='suspended')void listener.context.resume();};window.addEventListener('touchstart',resumeAudio,{passive:true});window.addEventListener('click',resumeAudio,{passive:true});
  const resize=()=>{const w=el.clientWidth,h=el.clientHeight;if(!w||!h)return;camera.aspect=w/h;camera.updateProjectionMatrix();renderer.setSize(w,h);};const observer=new ResizeObserver(resize);observer.observe(el);resize();
 
  // Cinema Multiplayer manager
@@ -270,10 +271,12 @@ export default function Theatre(props:TheatreProps){
      if(!(video as any)._spatialSource){
       try{
        const ctx=listener.context;
-       const src=(video.srcObject instanceof MediaStream && (ctx as any).createMediaStreamSource)
-         ? (ctx as any).createMediaStreamSource(video.srcObject)
-         : ctx.createMediaElementSource(video);
-       (video as any)._spatialSource=src;
+       const stream=video.srcObject instanceof MediaStream ? video.srcObject : null;
+       if(!stream||stream.getAudioTracks().length>0){
+        const src=(stream && (ctx as any).createMediaStreamSource)
+          ? (ctx as any).createMediaStreamSource(stream)
+          : ctx.createMediaElementSource(video);
+        (video as any)._spatialSource=src;
        const clarityEQ=ctx.createBiquadFilter();clarityEQ.type='highshelf';clarityEQ.frequency.value=3000;clarityEQ.gain.value=4;
        const surroundDelay=ctx.createDelay();surroundDelay.delayTime.value=0.035;
        const surroundFilter=ctx.createBiquadFilter();surroundFilter.type='highpass';surroundFilter.frequency.value=400;
@@ -284,6 +287,7 @@ export default function Theatre(props:TheatreProps){
        src.connect(surroundDelay);surroundDelay.connect(surroundFilter);surroundFilter.connect(surroundGain);
        src.connect(lfeFilter);lfeFilter.connect(lfeGain);
        (video as any)._audioNodes={center:clarityEQ,surround:surroundGain,lfe:lfeGain};
+       }
       }catch(e){console.warn('Spatial audio error:',e);}
      }
      const nodes=(video as any)._audioNodes;
@@ -345,7 +349,7 @@ export default function Theatre(props:TheatreProps){
  }
  id=requestAnimationFrame(frame);
  return()=>{
-  cancelAnimationFrame(id);observer.disconnect();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);renderer.domElement.removeEventListener('pointerdown',down);renderer.domElement.removeEventListener('pointermove',move);renderer.domElement.removeEventListener('pointerup',up);renderer.domElement.removeEventListener('pointercancel',up);renderer.domElement.removeEventListener('wheel',wheel);
+  cancelAnimationFrame(id);observer.disconnect();window.removeEventListener('keydown',keydown);window.removeEventListener('keyup',keyup);window.removeEventListener('blur',blur);window.removeEventListener('touchstart',resumeAudio);window.removeEventListener('click',resumeAudio);renderer.domElement.removeEventListener('pointerdown',down);renderer.domElement.removeEventListener('pointermove',move);renderer.domElement.removeEventListener('pointerup',up);renderer.domElement.removeEventListener('pointercancel',up);renderer.domElement.removeEventListener('wheel',wheel);
   multiplayer.dispose();
   if (latest.current.cinemaMultiplayerRef) {
     latest.current.cinemaMultiplayerRef.current = null;

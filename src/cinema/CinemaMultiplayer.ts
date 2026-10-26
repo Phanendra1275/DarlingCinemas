@@ -361,7 +361,11 @@ export class CinemaMultiplayer {
 
     // Match playing/paused state
     if (playing && video.paused) {
-      video.play().catch(() => {});
+      video.play().catch(() => {
+        video.muted = true;
+        (video as any)._autoMuted = true;
+        video.play().catch(() => {});
+      });
     } else if (!playing && !video.paused) {
       video.pause();
     }
