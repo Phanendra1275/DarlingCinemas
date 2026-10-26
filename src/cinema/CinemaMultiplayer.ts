@@ -327,12 +327,25 @@ export class CinemaMultiplayer {
    * FEATURE C: Video Drift Correction for Guests
    */
   public syncVideoElement(video: HTMLVideoElement, isHost: boolean) {
-    if (!video || !this.activePlayback) return;
+    if (!video) return;
 
     if (isHost) {
       // Host broadcasts playback status if changed
       return;
     }
+
+    // When playing a live WebRTC MediaStream from host, keep it playing and never seek
+    if (video.srcObject instanceof MediaStream) {
+      if (video.paused) {
+        video.play().catch(() => {
+          video.muted = true;
+          video.play().catch(() => {});
+        });
+      }
+      return;
+    }
+
+    if (!this.activePlayback) return;
 
     const { playing, time, rate, updatedAt } = this.activePlayback;
     const now = Date.now();

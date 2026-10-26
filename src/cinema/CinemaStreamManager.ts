@@ -20,15 +20,15 @@ function extractMediaStream(video: HTMLVideoElement): MediaStream | null {
   if (video.srcObject instanceof MediaStream) {
     return video.srcObject;
   }
-  if (video.readyState < 2 || video.videoWidth === 0) {
+  if (!video.src && video.readyState === 0) {
     return null;
   }
   try {
     if ((video as any).captureStream) {
-      return (video as any).captureStream();
+      return (video as any).captureStream(30);
     }
     if ((video as any).mozCaptureStream) {
-      return (video as any).mozCaptureStream();
+      return (video as any).mozCaptureStream(30);
     }
   } catch (err) {
     console.warn('captureStream error:', err);
@@ -77,16 +77,23 @@ export class CinemaStreamManager {
     video.addEventListener('canplay', onReady);
     video.addEventListener('play', onReady);
     video.addEventListener('loadeddata', onReady);
+    video.addEventListener('loadedmetadata', onReady);
     video.addEventListener('playing', onReady);
+    video.addEventListener('timeupdate', () => {
+      if (!this.currentStream && partyService.getIsHost() && !video.paused) {
+        onReady();
+      }
+    });
 
     this.videoListenersCleanup = () => {
       video.removeEventListener('canplay', onReady);
       video.removeEventListener('play', onReady);
       video.removeEventListener('loadeddata', onReady);
+      video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('playing', onReady);
     };
 
-    if (video.readyState >= 2 && !video.paused) {
+    if (video.readyState >= 1 || !video.paused) {
       onReady();
     }
   }
@@ -140,11 +147,32 @@ export class CinemaStreamManager {
       try { pc!.addTrack(track, stream); } catch (e) { console.warn('addTrack error:', e); }
     });
 
+    pc.onnegotiationneeded = async () => {
+      try {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        partyService.sendSignal(guestUid, {
+          type: 'offer',
+          offer: {
+            type: offer.type,
+            sdp: offer.sdp
+          }
+        });
+      } catch (err) {
+        console.warn('Renegotiation failed:', err);
+      }
+    };
+
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        const cand = event.candidate.toJSON ? event.candidate.toJSON() : {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
+        };
         partyService.sendSignal(guestUid, {
           type: 'candidate',
-          candidate: event.candidate.toJSON()
+          candidate: cand
         });
       }
     };
@@ -194,8 +222,13 @@ export class CinemaStreamManager {
     this.peerConnections.set(fromUid, pc);
 
     pc.ontrack = (event) => {
+      let stream: MediaStream | null = null;
       if (event.streams && event.streams[0]) {
-        const stream = event.streams[0];
+        stream = event.streams[0];
+      } else if (event.track) {
+        stream = new MediaStream([event.track]);
+      }
+      if (stream) {
         const media = partyService.getCurrentRoomMedia();
         this.options.onRemoteStream(stream, media?.title || 'Host Cinema Stream');
       }
@@ -203,9 +236,14 @@ export class CinemaStreamManager {
 
     pc.onicecandidate = (event) => {
       if (event.candidate) {
+        const cand = event.candidate.toJSON ? event.candidate.toJSON() : {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex
+        };
         partyService.sendSignal(fromUid, {
           type: 'candidate',
-          candidate: event.candidate.toJSON()
+          candidate: cand
         });
       }
     };

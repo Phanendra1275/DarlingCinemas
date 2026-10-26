@@ -57,6 +57,9 @@ export default function Home(){
       return ()=>clearTimeout(fadeTimer);
   },[]);
 
+  const mediaRef = useRef(media);
+  useEffect(() => { mediaRef.current = media; }, [media]);
+
   // Listen for room code and host changes
   useEffect(() => {
     const unsub = partyService.onRoomChange((code) => {
@@ -68,11 +71,11 @@ export default function Home(){
     };
   }, []);
 
-  // Initialize WebRTC Cinema Stream Manager for P2P video streaming across avatars
+  // Initialize WebRTC Cinema Stream Manager once on mount
   useEffect(() => {
     streamManagerRef.current = new CinemaStreamManager({
       onRemoteStream: (stream, streamTitle) => {
-        media.loadStream(stream, streamTitle || 'Host Cinema Stream');
+        mediaRef.current.loadStream(stream, streamTitle || 'Host Cinema Stream');
         setNotice('Connected to Host Live Video Stream 🍿');
       },
       onToast: (msg) => setNotice(msg)
@@ -81,14 +84,36 @@ export default function Home(){
       streamManagerRef.current?.destroy();
       streamManagerRef.current = null;
     };
-  }, [media]);
+  }, []);
 
-  // Synchronize local video element changes with the stream manager
+  // Synchronize local video element and automatic host playback sync
   useEffect(() => {
-    if (media.videoElement) {
-      streamManagerRef.current?.setLocalVideoElement(media.videoElement);
-    }
-  }, [media.videoElement, media.filename, media.isPlaying]);
+    if (!media.videoElement) return;
+    const v = media.videoElement;
+    streamManagerRef.current?.setLocalVideoElement(v);
+
+    const syncHostPlayback = () => {
+      if (partyService.getIsHost() && partyService.getActiveRoom()) {
+        partyService.updatePlayback({
+          playing: !v.paused && !v.ended,
+          time: v.currentTime || 0,
+          rate: v.playbackRate || 1.0
+        });
+      }
+    };
+
+    v.addEventListener('play', syncHostPlayback);
+    v.addEventListener('pause', syncHostPlayback);
+    v.addEventListener('seeked', syncHostPlayback);
+    v.addEventListener('ratechange', syncHostPlayback);
+
+    return () => {
+      v.removeEventListener('play', syncHostPlayback);
+      v.removeEventListener('pause', syncHostPlayback);
+      v.removeEventListener('seeked', syncHostPlayback);
+      v.removeEventListener('ratechange', syncHostPlayback);
+    };
+  }, [media.videoElement]);
 
   // Subscribe to active room media, playback, and members
   useEffect(() => {
@@ -102,8 +127,8 @@ export default function Home(){
       },
       onMedia: (roomMedia) => {
         if (roomMedia && roomMedia.streamUrl && !partyService.getIsHost()) {
-          if (media.filename !== roomMedia.streamUrl) {
-            media.loadUrl(roomMedia.streamUrl);
+          if (mediaRef.current.filename !== roomMedia.streamUrl) {
+            mediaRef.current.loadUrl(roomMedia.streamUrl);
           }
         }
         if (roomMedia && !roomMedia.streamUrl && roomMedia.title && !partyService.getIsHost()) {
@@ -114,7 +139,7 @@ export default function Home(){
     return () => {
       unsub();
     };
-  }, [activePartyCode, media]);
+  }, [activePartyCode]);
 
   const enterFromLanding = () => {
       setAppState('LOADING');

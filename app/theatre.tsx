@@ -270,7 +270,9 @@ export default function Theatre(props:TheatreProps){
      if(!(video as any)._spatialSource){
       try{
        const ctx=listener.context;
-       const src=ctx.createMediaElementSource(video);
+       const src=(video.srcObject instanceof MediaStream && (ctx as any).createMediaStreamSource)
+         ? (ctx as any).createMediaStreamSource(video.srcObject)
+         : ctx.createMediaElementSource(video);
        (video as any)._spatialSource=src;
        const clarityEQ=ctx.createBiquadFilter();clarityEQ.type='highshelf';clarityEQ.frequency.value=3000;clarityEQ.gain.value=4;
        const surroundDelay=ctx.createDelay();surroundDelay.delayTime.value=0.035;
@@ -296,7 +298,18 @@ export default function Theatre(props:TheatreProps){
     }
   }
   const lightCfg=(window as any).CINEMA_LIGHTS_CONFIG||{samplingFPS:6,blendWithWhite:.15,minLuminance:.02,intensityMul:30,attack:6.0,release:2.5};
-  const ready=!!video&&video.readyState>=2&&video.videoWidth>0;videoMesh.visible=ready;room.projectorBeam.visible=(ready&&!video!.paused);if(ready&&video){const ratio=video.videoWidth/video.videoHeight,screenRatio=SCREEN.width/SCREEN.height;videoMesh.scale.set(ratio<screenRatio?ratio/screenRatio:1,ratio>screenRatio?screenRatio/ratio:1,1);(room.screen.material as T.MeshBasicMaterial).map=null;(room.screen.material as T.MeshBasicMaterial).color.set('#000');if(context&&!sampleFailed&&t-sampled>1000/lightCfg.samplingFPS){sampled=t;try{context.drawImage(video,0,0,24,14);const data=context.getImageData(0,0,24,14).data;
+  const isStream=!!video&&(video.srcObject instanceof MediaStream);
+  const ready=!!video&&(isStream?(video.readyState>=1||!video.paused):(video.readyState>=2&&video.videoWidth>0));
+  videoMesh.visible=ready;
+  room.projectorBeam.visible=ready&&(isStream?true:!video!.paused);
+  if(ready&&video){
+   if(texture)texture.needsUpdate=true;
+   const vw=video.videoWidth>0?video.videoWidth:16,vh=video.videoHeight>0?video.videoHeight:9;
+   const ratio=vw/vh,screenRatio=SCREEN.width/SCREEN.height;
+   videoMesh.scale.set(ratio<screenRatio?ratio/screenRatio:1,ratio>screenRatio?screenRatio/ratio:1,1);
+   (room.screen.material as T.MeshBasicMaterial).map=null;
+   (room.screen.material as T.MeshBasicMaterial).color.set('#000');
+   if(context&&!sampleFailed&&t-sampled>1000/lightCfg.samplingFPS){sampled=t;try{context.drawImage(video,0,0,24,14);const data=context.getImageData(0,0,24,14).data;
    let rL=0,gL=0,bL=0,cL=0, rC=0,gC=0,bC=0,cC=0, rR=0,gR=0,bR=0,cR=0;
    for(let y=0;y<14;y++){for(let x=0;x<24;x++){const i=(y*24+x)*4, r=data[i],g=data[i+1],b=data[i+2], lum=(0.299*r+0.587*g+0.114*b)/255;
     if(lum<lightCfg.minLuminance)continue; const w=0.1+lum;
