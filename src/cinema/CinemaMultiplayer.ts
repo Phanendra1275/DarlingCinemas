@@ -139,12 +139,7 @@ export class CinemaMultiplayer {
   }
 
   private createSeatIndicators() {
-    seats.forEach((seat) => {
-      const marker = createSeatMarker(seat.id);
-      marker.sprite.position.set(seat.position.x, seat.position.y + 1.25, seat.position.z);
-      this.scene.add(marker.sprite);
-      this.seatMarkers.set(seat.id, marker);
-    });
+    // Floating seat number tags removed per user request for an unobstructed cinema view
   }
 
   /**
@@ -226,7 +221,7 @@ export class CinemaMultiplayer {
         const avatarColor = member.color || '#803747';
         const gender = member.gender || 'Male';
         const avatar = createAvatar(avatarColor, gender);
-        const nameTag = createBillboardSprite(member.name || 'Guest', '#f5eedc', member.seatId || undefined);
+        const nameTag = createBillboardSprite(member.name || 'Guest', '#f5eedc');
         avatar.root.add(nameTag.sprite);
         this.scene.add(avatar.root);
 
@@ -263,11 +258,10 @@ export class CinemaMultiplayer {
         rig.avatar.jacket.color.set(member.color);
       }
 
-      // Update name & seat badge
-      if (member.seatId !== rig.seatId || member.name !== rig.name) {
-        rig.seatId = member.seatId;
+      // Update name
+      if (member.name !== rig.name) {
         rig.name = member.name;
-        rig.nameTag.redraw(member.name, member.seatId || undefined);
+        rig.nameTag.redraw(member.name);
         rig.nameTag.tex.needsUpdate = true;
       }
     }
