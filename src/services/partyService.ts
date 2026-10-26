@@ -12,7 +12,9 @@ import {
   onDisconnect,
   runTransaction,
   Database,
-  Unsubscribe
+  Unsubscribe,
+  remove,
+  onChildAdded
 } from 'firebase/database';
 import type {
   RoomMeta,
@@ -55,13 +57,25 @@ class LocalPartyBridge {
   private roomCode: string | null = null;
   private listeners: Map<string, Set<(val: any) => void>> = new Map();
   private cache: Record<string, any> = {};
+  private currentUid: string | null = null;
+  private signalListeners: Set<(fromUid: string, signalData: any) => void> = new Set();
+  private processedSignals: Set<string> = new Set();
 
   constructor() {
     if (typeof window !== 'undefined') {
       if ('BroadcastChannel' in window) {
         this.channel = new BroadcastChannel('darling_cinema_party_sync');
         this.channel.onmessage = (event) => {
-          const { roomCode, path, value, doc } = event.data || {};
+          const data = event.data || {};
+          if (data.type === 'SIGNAL') {
+            if (data.roomCode === this.roomCode && data.to === this.currentUid) {
+              if (data.id && this.processedSignals.has(data.id)) return;
+              if (data.id) this.processedSignals.add(data.id);
+              this.triggerSignal(data.from, data.signal);
+            }
+            return;
+          }
+          const { roomCode, path, value, doc } = data;
           if (roomCode === this.roomCode) {
             if (doc) {
               this.cache = doc;
@@ -77,6 +91,16 @@ class LocalPartyBridge {
           try {
             this.cache = JSON.parse(event.newValue);
             this.triggerAllListeners();
+
+            if (this.currentUid && this.cache.signals && this.cache.signals[this.currentUid]) {
+              const mySigs = this.cache.signals[this.currentUid];
+              for (const [sigId, s] of Object.entries(mySigs)) {
+                if (!this.processedSignals.has(sigId)) {
+                  this.processedSignals.add(sigId);
+                  this.triggerSignal((s as any).from, (s as any).signal);
+                }
+              }
+            }
           } catch {}
         }
       });
@@ -89,6 +113,10 @@ class LocalPartyBridge {
         this.handleDisconnect();
       });
     }
+  }
+
+  public setUid(uid: string) {
+    this.currentUid = uid;
   }
 
   public setRoom(code: string) {
@@ -264,6 +292,40 @@ class LocalPartyBridge {
     });
     this.disconnectHandlers = [];
   }
+
+  public sendSignal(fromUid: string, toUid: string, signal: any) {
+    if (typeof window === 'undefined' || !this.roomCode) return;
+    const signalId = `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    try {
+      this.channel?.postMessage({
+        type: 'SIGNAL',
+        roomCode: this.roomCode,
+        id: signalId,
+        from: fromUid,
+        to: toUid,
+        signal
+      });
+    } catch {}
+
+    const doc = this.readStorage();
+    if (!doc.signals) doc.signals = {};
+    if (!doc.signals[toUid]) doc.signals[toUid] = {};
+    doc.signals[toUid][signalId] = { id: signalId, from: fromUid, signal, timestamp: Date.now() };
+    this.writeStorage(doc);
+  }
+
+  public onSignal(callback: (fromUid: string, signalData: any) => void): () => void {
+    this.signalListeners.add(callback);
+    return () => {
+      this.signalListeners.delete(callback);
+    };
+  }
+
+  public triggerSignal(fromUid: string, signalData: any) {
+    this.signalListeners.forEach(cb => {
+      try { cb(fromUid, signalData); } catch (e) { console.warn('Signal listener error:', e); }
+    });
+  }
 }
 
 export class PartyService {
@@ -284,6 +346,10 @@ export class PartyService {
   private lastPoseSentAt = 0;
   private pendingPose: PlayerPose | null = null;
   private poseThrottleTimer: any = null;
+
+  private cachedMembers: Record<string, RoomMember> = {};
+  private cachedMedia: RoomMedia | null = null;
+  private signalListeners: Set<(fromUid: string, signalData: any) => void> = new Set();
 
   private unsubscribers: Array<() => void> = [];
   private roomChangeListeners: Set<(roomCode: string | null) => void> = new Set();
@@ -309,6 +375,7 @@ export class PartyService {
       const cachedUid = sessionStorage.getItem('darling_party_uid');
       if (cachedUid) {
         this.uid = cachedUid;
+        this.localBridge.setUid(cachedUid);
       }
     }
   }
@@ -389,6 +456,7 @@ export class PartyService {
         `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
       if (typeof window !== 'undefined') sessionStorage.setItem('darling_party_uid', this.uid);
     }
+    this.localBridge.setUid(this.uid);
     return this.uid;
   }
 
@@ -402,6 +470,58 @@ export class PartyService {
 
   public getIsHost(): boolean {
     return this.isHost;
+  }
+
+  public getMembers(): Record<string, RoomMember> {
+    if (this.useLocalFallback || !this.db) {
+      return this.localBridge.get('members') || {};
+    }
+    return this.cachedMembers || {};
+  }
+
+  public getCurrentRoomMedia(): RoomMedia | null {
+    if (this.useLocalFallback || !this.db) {
+      return this.localBridge.get('media') || null;
+    }
+    return this.cachedMedia;
+  }
+
+  public sendSignal(toUid: string, signalData: any): void {
+    if (!this.activeRoomCode) return;
+    if (this.useLocalFallback || !this.db) {
+      this.localBridge.sendSignal(this.getUid(), toUid, signalData);
+      return;
+    }
+    const sigRef = push(ref(this.db, `rooms/${this.activeRoomCode}/signals/${toUid}`));
+    set(sigRef, {
+      from: this.getUid(),
+      signal: signalData,
+      timestamp: Date.now()
+    }).catch(() => {});
+  }
+
+  public onSignal(callback: (fromUid: string, signalData: any) => void): () => void {
+    this.signalListeners.add(callback);
+    let unsubBackend: (() => void) | null = null;
+
+    if (this.useLocalFallback || !this.db) {
+      unsubBackend = this.localBridge.onSignal(callback);
+    } else if (this.activeRoomCode && this.db) {
+      const mySignalsRef = ref(this.db, `rooms/${this.activeRoomCode}/signals/${this.getUid()}`);
+      const firebaseUnsub = onChildAdded(mySignalsRef, (snap) => {
+        const val = snap.val();
+        if (val && val.from && val.signal) {
+          callback(val.from, val.signal);
+          remove(snap.ref).catch(() => {});
+        }
+      });
+      unsubBackend = () => firebaseUnsub();
+    }
+
+    return () => {
+      this.signalListeners.delete(callback);
+      unsubBackend?.();
+    };
   }
 
   /**
@@ -927,9 +1047,15 @@ export class PartyService {
     if (this.useLocalFallback || !this.db) {
       const unsubs = [
         this.localBridge.on('meta', (v) => v && listener.onMeta?.(v)),
-        this.localBridge.on('media', (v) => v && listener.onMedia?.(v)),
+        this.localBridge.on('media', (v) => {
+          this.cachedMedia = v || null;
+          if (v) listener.onMedia?.(v);
+        }),
         this.localBridge.on('playback', (v) => v && listener.onPlayback?.(v)),
-        this.localBridge.on('members', (v) => listener.onMembers?.(v || {})),
+        this.localBridge.on('members', (v) => {
+          this.cachedMembers = v || {};
+          listener.onMembers?.(this.cachedMembers);
+        }),
         this.localBridge.on('seats', (v) => listener.onSeats?.(v || {})),
         this.localBridge.on('poses', (v) => listener.onPoses?.(v || {})),
         this.localBridge.on('chat', (v) => {
@@ -966,13 +1092,19 @@ export class PartyService {
       if (s.exists()) listener.onMeta?.(s.val() as RoomMeta);
     });
     const unsubMedia = onValue(mediaRef, (s) => {
-      if (s.exists()) listener.onMedia?.(s.val() as RoomMedia);
+      if (s.exists()) {
+        const val = s.val() as RoomMedia;
+        this.cachedMedia = val;
+        listener.onMedia?.(val);
+      }
     });
     const unsubPlayback = onValue(playbackRef, (s) => {
       if (s.exists()) listener.onPlayback?.(s.val() as RoomPlayback);
     });
     const unsubMembers = onValue(membersRef, (s) => {
-      listener.onMembers?.((s.val() || {}) as Record<string, RoomMember>);
+      const val = (s.val() || {}) as Record<string, RoomMember>;
+      this.cachedMembers = val;
+      listener.onMembers?.(val);
     });
     const unsubSeats = onValue(seatsRef, (s) => {
       listener.onSeats?.((s.val() || {}) as RoomSeats);

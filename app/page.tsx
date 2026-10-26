@@ -11,6 +11,7 @@ import {sessionManager} from '../lib/auth/sessionManager';
 import {darlingStorage} from '../lib/storage/darlingStorage';
 import {partyService} from '../src/services/partyService';
 import {CinemaMultiplayer} from '../src/cinema/CinemaMultiplayer';
+import {CinemaStreamManager} from '../src/cinema/CinemaStreamManager';
 import {WatchPartyDrawer} from '../src/components/WatchPartyDrawer';
 import {TheatreChatHud} from '../src/components/TheatreChatHud';
 
@@ -29,6 +30,7 @@ export default function Home(){
   
   const input=useRef<HTMLInputElement>(null),move=useRef({x:0,y:0,magnitude:0}),dialog=useRef<HTMLDivElement>(null),lastFocus=useRef<HTMLElement|null>(null);
   const multiplayerRef=useRef<CinemaMultiplayer|null>(null);
+  const streamManagerRef=useRef<CinemaStreamManager|null>(null);
   const {showHUD,beginInteraction,endInteraction}=useAutoHide(media.isPlaying,!!seat);
 
   useEffect(()=>{
@@ -66,18 +68,46 @@ export default function Home(){
     };
   }, []);
 
-  // Subscribe to active room media and playback
+  // Initialize WebRTC Cinema Stream Manager for P2P video streaming across avatars
+  useEffect(() => {
+    streamManagerRef.current = new CinemaStreamManager({
+      onRemoteStream: (stream, streamTitle) => {
+        media.loadStream(stream, streamTitle || 'Host Cinema Stream');
+        setNotice('Connected to Host Live Video Stream 🍿');
+      },
+      onToast: (msg) => setNotice(msg)
+    });
+    return () => {
+      streamManagerRef.current?.destroy();
+      streamManagerRef.current = null;
+    };
+  }, [media]);
+
+  // Synchronize local video element changes with the stream manager
+  useEffect(() => {
+    if (media.videoElement) {
+      streamManagerRef.current?.setLocalVideoElement(media.videoElement);
+    }
+  }, [media.videoElement, media.filename, media.isPlaying]);
+
+  // Subscribe to active room media, playback, and members
   useEffect(() => {
     if (!activePartyCode) return;
     const unsub = partyService.subscribeToRoom({
       onMeta: (meta) => {
         setIsHost(meta.hostId === partyService.getUid());
       },
+      onMembers: (members) => {
+        streamManagerRef.current?.onMembersChanged(members);
+      },
       onMedia: (roomMedia) => {
         if (roomMedia && roomMedia.streamUrl && !partyService.getIsHost()) {
           if (media.filename !== roomMedia.streamUrl) {
             media.loadUrl(roomMedia.streamUrl);
           }
+        }
+        if (roomMedia && !roomMedia.streamUrl && roomMedia.title && !partyService.getIsHost()) {
+          setNotice(`Now Showing: "${roomMedia.title}" (Host Live Stream)`);
         }
       }
     });
@@ -148,6 +178,9 @@ export default function Home(){
    setPanel('player');
    if(partyService.getIsHost()){
      partyService.updateMedia({id:`movie-${Date.now()}`,title:file.name.replace(/\.[^.]+$/,''),kind:'file'});
+      setTimeout(() => {
+        streamManagerRef.current?.checkAndBroadcastLocalVideo();
+      }, 350);
    }
  };
  const handleTogglePlay=()=>{
@@ -286,8 +319,31 @@ export default function Home(){
      <button className={videoTab==='share'?'selected':''} onClick={()=>setVideoTab('share')}>Share screen</button>
    </div>
    {videoTab==='upload' && <div className="dc-drop" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();if(e.dataTransfer.files[0])load(e.dataTransfer.files[0]);}}><Upload/><h3>Bring your own story.</h3><p>Drop a video here, or choose one from your device.</p><button className="dc-pill" disabled={media.status==='loading'} onClick={()=>input.current?.click()}>{media.status==='loading'?'Preparing video…':media.filename?'Change video':'Choose a video'} →</button><small>MP4 and WebM. MOV where supported.<br/>Nothing is uploaded.</small></div>}
-   {videoTab==='link' && <div className="dc-drop" style={{padding: '32px 24px'}}><h3 style={{marginBottom: '8px'}}>Stream from the web.</h3><p style={{marginBottom: '24px'}}>Paste a direct link to an MP4, WebM, or Google Drive file.</p><input type="url" value={videoUrl} onChange={e=>setVideoUrl(e.target.value)} placeholder="https://...mp4" style={{width: '100%', boxSizing: 'border-box', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', marginBottom: '16px'}} /><button className="dc-pill" disabled={media.status==='loading' || !videoUrl} onClick={()=>{ media.loadUrl(videoUrl); }}>{media.status==='loading'?'Loading link…':'Play link'} →</button></div>}
-   {videoTab==='share' && <div className="dc-drop" style={{padding: '32px 24px'}}><h3 style={{marginBottom: '8px'}}>Host a watch party.</h3><p style={{marginBottom: '24px'}}>Share a browser tab directly onto the cinema screen.</p><button className="dc-pill" onClick={()=>{ media.startScreenShare(); }}>Start screen share →</button><small style={{marginTop: '16px', display: 'block'}}>Your screen data never leaves your device.</small></div>}
+   {videoTab==='link' && <div className="dc-drop" style={{padding: '32px 24px'}}><h3 style={{marginBottom: '8px'}}>Stream from the web.</h3><p style={{marginBottom: '24px'}}>Paste a direct link to an MP4, WebM, or Google Drive file.</p><input type="url" value={videoUrl} onChange={e=>setVideoUrl(e.target.value)} placeholder="https://...mp4" style={{width: '100%', boxSizing: 'border-box', padding: '12px', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white', borderRadius: '4px', marginBottom: '16px'}} /><button className="dc-pill" disabled={media.status==='loading' || !videoUrl} onClick={()=>{
+      media.loadUrl(videoUrl);
+      if (partyService.getIsHost()) {
+        const streamTitle = videoUrl.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Web Stream';
+        partyService.updateMedia({
+          id: `url-${Date.now()}`,
+          title: streamTitle,
+          kind: 'stream',
+          streamUrl: videoUrl
+        });
+      }
+    }}>{media.status==='loading'?'Loading link…':'Play link'} →</button></div>}
+   {videoTab==='share' && <div className="dc-drop" style={{padding: '32px 24px'}}><h3 style={{marginBottom: '8px'}}>Host a watch party.</h3><p style={{marginBottom: '24px'}}>Share a browser tab directly onto the cinema screen.</p><button className="dc-pill" onClick={async ()=>{
+      await media.startScreenShare();
+      if (partyService.getIsHost()) {
+        partyService.updateMedia({
+          id: `screen-${Date.now()}`,
+          title: 'Host Screen Share',
+          kind: 'stream'
+        });
+        setTimeout(() => {
+          streamManagerRef.current?.checkAndBroadcastLocalVideo();
+        }, 350);
+      }
+    }}>Start screen share →</button><small style={{marginTop: '16px', display: 'block'}}>Your screen data never leaves your device.</small></div>}
    {media.status==='error'&&<p role="alert" className="dc-error">{media.error||'This video could not be played.'}</p>}<button className="dc-wide" onClick={close}>Back to the cinema →</button></>}
    {panel==='profile'&&<><p>Your presence in the cinema. No account required.</p><div className="dc-avatar-preview" style={{'--jacket':jacket} as React.CSSProperties}><div className="avatar-head"/><div className="avatar-body"/><div className="avatar-legs"/></div><label className="dc-field">DISPLAY NAME<input value={name} maxLength={24} onChange={e=>setName(e.target.value)} /></label><span className="dc-eyebrow">YOUR JACKET</span><div className="dc-jackets" role="radiogroup" aria-label="Your jacket">{jackets.map(([label,color])=><button key={label} role="radio" aria-checked={jacket===color} onClick={()=>setJacket(color)}><i style={{background:color}}/>{label}</button>)}</div><button className="dc-wide" onClick={()=>{const profile=darlingStorage.loadProfile(); if(profile){profile.name=name;profile.jacket=jacket;darlingStorage.saveProfile(profile);} setNotice('Your player has been saved.');}}>Save my player</button><button className="dc-wide secondary" onClick={enter}>Walk with my player →</button><button className="dc-wide secondary" style={{marginTop: '16px', background: 'rgba(255,255,255,0.05)'}} onClick={()=>{sessionManager.clearSession(); setNotice('Signed out.'); close(); resetView(); setAppState('ONBOARDING');}}>SIGN OUT</button><button className="dc-wide secondary" style={{marginTop: '8px', color: '#ff6b6b', background: 'rgba(255,0,0,0.05)'}} onClick={()=>{if(confirm('Are you sure you want to delete your local profile?')){sessionManager.deleteLocalProfile(); setNotice('Local profile deleted.'); close(); resetView(); setAppState('ONBOARDING');}}}>DELETE LOCAL PROFILE</button><p>WASD to move. Drag to look. E to sit or stand.<br/>On mobile, use the on-screen thumbstick.</p></>}
    {panel==='seats'&&<><p>Ten wide recliners. Not a bad seat in the house.</p><div className="dc-seat-map"><div className="dc-map-screen">SCREEN</div>{['A','B'].map(row=><div className="dc-seat-row" key={row}><span>{row}</span>{seats.filter(s=>s.id.startsWith(row)).map(s=><button key={s.id} aria-label={`Select seat ${s.id}`} aria-pressed={selection===s.id} className={selection===s.id?'selected':''} onClick={()=>setSelection(s.id)}><Armchair/>{s.id}</button>)}</div>)}<small>RAISED PLATFORM · ENTRANCE</small></div><span className="dc-eyebrow">YOUR SPOT</span><h3>Seat {selection}</h3><p>{selection.startsWith('B')?'Raised back row':'Main floor'} · {selection.endsWith('3')?'A perfectly centered view':'A view of your own'}</p><button className="dc-wide" onClick={()=>{handleSelectSeat(selection);}}>Settle into {selection} →</button><p>We will walk you there. You can take over at any time.</p></>}

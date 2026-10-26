@@ -150,7 +150,7 @@ export default function Theatre(props:TheatreProps){
  const player=new T.Vector3(6.45,.32,5.9),velocity=new T.Vector2(),desired=new T.Vector3(),focus=new T.Vector3(),direction=new T.Vector3(),orbitRay=new T.Raycaster();
  let overview=true,yaw=0,pitch=defaultCamera.pitch,distance=defaultCamera.distance,lastSeat:string|null=null,lastNearby:string|null=null,lastReset=props.reset,lastWalk=props.walk,lastDpr=0,lastFov=0,elapsed=0;
  let pointer:number|null=null,px=0,py=0,dragged=false;const keys=new Set<string>();
-  let video:HTMLVideoElement|null=null,texture:T.VideoTexture|null=null;const videoMaterial=new T.MeshBasicMaterial({toneMapped:false});const videoMesh=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),videoMaterial);videoMesh.position.z=.012;videoMesh.visible=false;room.screen.add(videoMesh);
+  let video:HTMLVideoElement|null=null,texture:T.VideoTexture|null=null,lastVideoSrc:any=null;const videoMaterial=new T.MeshBasicMaterial({toneMapped:false});const videoMesh=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),videoMaterial);videoMesh.position.z=.012;videoMesh.visible=false;room.screen.add(videoMesh);
   if(typeof window!=='undefined'&&!(window as any).CINEMA_LIGHTS_CONFIG){(window as any).CINEMA_LIGHTS_CONFIG={samplingFPS:6,blendWithWhite:.15,minLuminance:.02,intensityMul:30,attack:6.0,release:2.5};}
   const sample=document.createElement('canvas');sample.width=24;sample.height=14;const context=sample.getContext('2d',{willReadFrequently:true});let sampled=0,sampleFailed=false;let previousMap:T.Texture|null=room.welcome;
   const tL=new T.Color('#000'),tC=new T.Color('#000'),tR=new T.Color('#000');let iL=0,iC=0,iR=0;
@@ -261,8 +261,9 @@ export default function Theatre(props:TheatreProps){
     multiplayer.syncVideoElement(video, latest.current.isHost ?? false);
   }
 
-  if(p.video!==video){
-   texture?.dispose();video=p.video??null;texture=video?new T.VideoTexture(video):null;
+  const currentSrc = p.video ? (p.video.src || p.video.srcObject) : null;
+  if(p.video!==video || currentSrc !== lastVideoSrc){
+   texture?.dispose();video=p.video??null;lastVideoSrc=currentSrc;texture=video?new T.VideoTexture(video):null;
    if(texture){texture.colorSpace=T.SRGBColorSpace;texture.minFilter=T.LinearFilter;texture.magFilter=T.LinearFilter;}
    videoMaterial.map=texture;videoMaterial.needsUpdate=true;sampleFailed=false;
     if(video){
