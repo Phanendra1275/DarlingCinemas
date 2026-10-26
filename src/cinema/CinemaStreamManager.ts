@@ -143,13 +143,13 @@ export class CinemaStreamManager {
     pc = new RTCPeerConnection(RTC_CONFIG);
     this.peerConnections.set(guestUid, pc);
 
-    stream.getTracks().forEach(track => {
-      try { pc!.addTrack(track, stream); } catch (e) { console.warn('addTrack error:', e); }
-    });
-
-    pc.onnegotiationneeded = async () => {
+    let isMakingOffer = false;
+    const sendOffer = async () => {
+      if (isMakingOffer || pc.signalingState !== 'stable') return;
+      isMakingOffer = true;
       try {
         const offer = await pc.createOffer();
+        if (pc.signalingState !== 'stable') return;
         await pc.setLocalDescription(offer);
         partyService.sendSignal(guestUid, {
           type: 'offer',
@@ -159,8 +159,18 @@ export class CinemaStreamManager {
           }
         });
       } catch (err) {
-        console.warn('Renegotiation failed:', err);
+        console.warn('sendOffer error:', err);
+      } finally {
+        isMakingOffer = false;
       }
+    };
+
+    stream.getTracks().forEach(track => {
+      try { pc!.addTrack(track, stream); } catch (e) { console.warn('addTrack error:', e); }
+    });
+
+    pc.onnegotiationneeded = () => {
+      sendOffer();
     };
 
     pc.onicecandidate = (event) => {
@@ -183,19 +193,7 @@ export class CinemaStreamManager {
       }
     };
 
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      partyService.sendSignal(guestUid, {
-        type: 'offer',
-        offer: {
-          type: offer.type,
-          sdp: offer.sdp
-        }
-      });
-    } catch (err) {
-      console.warn('Failed to create offer for guest:', guestUid, err);
-    }
+    sendOffer();
   }
 
   private handleSignal(fromUid: string, data: any) {
@@ -221,17 +219,22 @@ export class CinemaStreamManager {
     pc = new RTCPeerConnection(RTC_CONFIG);
     this.peerConnections.set(fromUid, pc);
 
+    const remoteStream = new MediaStream();
+
     pc.ontrack = (event) => {
-      let stream: MediaStream | null = null;
       if (event.streams && event.streams[0]) {
-        stream = event.streams[0];
+        event.streams[0].getTracks().forEach(track => {
+          if (!remoteStream.getTracks().some(t => t.id === track.id)) {
+            remoteStream.addTrack(track);
+          }
+        });
       } else if (event.track) {
-        stream = new MediaStream([event.track]);
+        if (!remoteStream.getTracks().some(t => t.id === event.track.id)) {
+          remoteStream.addTrack(event.track);
+        }
       }
-      if (stream) {
-        const media = partyService.getCurrentRoomMedia();
-        this.options.onRemoteStream(stream, media?.title || 'Host Cinema Stream');
-      }
+      const media = partyService.getCurrentRoomMedia();
+      this.options.onRemoteStream(remoteStream, media?.title || 'Host Cinema Stream');
     };
 
     pc.onicecandidate = (event) => {

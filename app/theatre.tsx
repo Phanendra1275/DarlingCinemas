@@ -150,7 +150,7 @@ export default function Theatre(props:TheatreProps){
  const player=new T.Vector3(6.45,.32,5.9),velocity=new T.Vector2(),desired=new T.Vector3(),focus=new T.Vector3(),direction=new T.Vector3(),orbitRay=new T.Raycaster();
  let overview=true,yaw=0,pitch=defaultCamera.pitch,distance=defaultCamera.distance,lastSeat:string|null=null,lastNearby:string|null=null,lastReset=props.reset,lastWalk=props.walk,lastDpr=0,lastFov=0,elapsed=0;
  let pointer:number|null=null,px=0,py=0,dragged=false;const keys=new Set<string>();
-  let video:HTMLVideoElement|null=null,texture:T.VideoTexture|null=null,lastVideoSrc:any=null;const videoMaterial=new T.MeshBasicMaterial({toneMapped:false});const videoMesh=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),videoMaterial);videoMesh.position.z=.012;videoMesh.visible=false;room.screen.add(videoMesh);
+  let video:HTMLVideoElement|null=null,texture:T.VideoTexture|null=null,lastVideoSrc:any=null;const videoMaterial=new T.MeshBasicMaterial({toneMapped:false});const videoMesh=new T.Mesh(new T.PlaneGeometry(SCREEN.width,SCREEN.height),videoMaterial);videoMesh.position.z=.04;videoMesh.visible=false;room.screen.add(videoMesh);
   if(typeof window!=='undefined'&&!(window as any).CINEMA_LIGHTS_CONFIG){(window as any).CINEMA_LIGHTS_CONFIG={samplingFPS:6,blendWithWhite:.15,minLuminance:.02,intensityMul:30,attack:6.0,release:2.5};}
   const sample=document.createElement('canvas');sample.width=24;sample.height=14;const context=sample.getContext('2d',{willReadFrequently:true});let sampled=0,sampleFailed=false;let previousMap:T.Texture|null=room.welcome;
   const tL=new T.Color('#000'),tC=new T.Color('#000'),tR=new T.Color('#000');let iL=0,iC=0,iR=0;
@@ -264,7 +264,7 @@ export default function Theatre(props:TheatreProps){
   const currentSrc = p.video ? (p.video.src || p.video.srcObject) : null;
   if(p.video!==video || currentSrc !== lastVideoSrc){
    texture?.dispose();video=p.video??null;lastVideoSrc=currentSrc;texture=video?new T.VideoTexture(video):null;
-   if(texture){texture.colorSpace=T.SRGBColorSpace;texture.minFilter=T.LinearFilter;texture.magFilter=T.LinearFilter;}
+   if(texture){texture.colorSpace=T.SRGBColorSpace;texture.minFilter=T.LinearFilter;texture.magFilter=T.LinearFilter;texture.generateMipmaps=false;}
    videoMaterial.map=texture;videoMaterial.needsUpdate=true;sampleFailed=false;
     if(video){
      if(!(video as any)._spatialSource){
@@ -307,8 +307,8 @@ export default function Theatre(props:TheatreProps){
    const vw=video.videoWidth>0?video.videoWidth:16,vh=video.videoHeight>0?video.videoHeight:9;
    const ratio=vw/vh,screenRatio=SCREEN.width/SCREEN.height;
    videoMesh.scale.set(ratio<screenRatio?ratio/screenRatio:1,ratio>screenRatio?screenRatio/ratio:1,1);
-   (room.screen.material as T.MeshBasicMaterial).map=null;
-   (room.screen.material as T.MeshBasicMaterial).color.set('#000');
+   const screenMat=room.screen.material as T.MeshBasicMaterial;
+   if(texture&&screenMat.map!==texture){screenMat.map=texture;screenMat.color.set('#fff');screenMat.needsUpdate=true;}
    if(context&&!sampleFailed&&t-sampled>1000/lightCfg.samplingFPS){sampled=t;try{context.drawImage(video,0,0,24,14);const data=context.getImageData(0,0,24,14).data;
    let rL=0,gL=0,bL=0,cL=0, rC=0,gC=0,bC=0,cC=0, rR=0,gR=0,bR=0,cR=0;
    for(let y=0;y<14;y++){for(let x=0;x<24;x++){const i=(y*24+x)*4, r=data[i],g=data[i+1],b=data[i+2], lum=(0.299*r+0.587*g+0.114*b)/255;

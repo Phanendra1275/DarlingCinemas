@@ -17,13 +17,25 @@ export function parseGoogleDriveUrl(url: string) {
 
 export function useLocalVideo(){
   const [videoElement,setVideoElement]=useState<HTMLVideoElement|null>(null),[isPlaying,setIsPlaying]=useState(false),[progress,setProgress]=useState(0),[duration,setDuration]=useState(0),[volume,setVolume]=useState(1),[isMuted,setIsMuted]=useState(false),[playbackRate,setPlaybackRate]=useState(1),[isLooping,setIsLooping]=useState(false),[filename,setFilename]=useState<string|null>(null),[status,setStatus]=useState<'idle'|'loading'|'ready'|'error'>('idle'),[error,setError]=useState('');
-  const objectUrl=useRef<string|null>(null),streamRef=useRef<MediaStream|null>(null),cancelCandidate=useRef<(()=>void)|null>(null),generation=useRef(0);
+  const objectUrl=useRef<string|null>(null),streamRef=useRef<MediaStream|null>(null),isLocalScreenShare=useRef(false),cancelCandidate=useRef<(()=>void)|null>(null),generation=useRef(0);
 
   useEffect(()=>{
     const el=document.createElement('video');
     el.playsInline=true;
+    el.setAttribute('playsinline', 'true');
+    el.setAttribute('webkit-playsinline', 'true');
     el.preload='auto';
     el.crossOrigin='anonymous';
+    el.style.position='fixed';
+    el.style.top='0';
+    el.style.left='0';
+    el.style.width='1px';
+    el.style.height='1px';
+    el.style.opacity='0.001';
+    el.style.pointerEvents='none';
+    el.style.zIndex='-99999';
+    document.body.appendChild(el);
+
     const sync=()=>{
       setProgress(el.currentTime);
       setDuration(Number.isFinite(el.duration)?el.duration:0);
@@ -54,8 +66,13 @@ export function useLocalVideo(){
       el.srcObject=null;
       el.removeAttribute('src');
       el.load();
+      if(el.parentNode){
+        el.parentNode.removeChild(el);
+      }
       if(objectUrl.current)URL.revokeObjectURL(objectUrl.current);
-      if(streamRef.current)streamRef.current.getTracks().forEach(t=>t.stop());
+      if(streamRef.current&&isLocalScreenShare.current){
+        streamRef.current.getTracks().forEach(t=>t.stop());
+      }
     };
   },[]);
 
@@ -66,12 +83,29 @@ export function useLocalVideo(){
     videoElement.srcObject=null;
     videoElement.load();
     if(objectUrl.current){URL.revokeObjectURL(objectUrl.current);objectUrl.current=null;}
-    if(streamRef.current){streamRef.current.getTracks().forEach(t=>t.stop());streamRef.current=null;}
+    if(streamRef.current){
+      if(isLocalScreenShare.current){
+        streamRef.current.getTracks().forEach(t=>t.stop());
+        isLocalScreenShare.current=false;
+      }
+      streamRef.current=null;
+    }
   },[videoElement]);
 
   const loadStream=useCallback((stream:MediaStream, name='Host Cinema Stream')=>{
     if(!videoElement)return;
-    clearMedia();
+    if(videoElement.srcObject===stream&&streamRef.current===stream){
+      if(videoElement.paused){
+        videoElement.play().catch(()=>{
+          videoElement.muted=true;
+          videoElement.play().catch(()=>{});
+        });
+      }
+      return;
+    }
+    if(objectUrl.current){URL.revokeObjectURL(objectUrl.current);objectUrl.current=null;}
+    videoElement.pause();
+    videoElement.removeAttribute('src');
     streamRef.current=stream;
     videoElement.srcObject=stream;
     videoElement.play().catch(()=>{
@@ -82,7 +116,7 @@ export function useLocalVideo(){
     setFilename(name);
     setStatus('ready');
     setError('');
-  },[videoElement,clearMedia]);
+  },[videoElement]);
 
   const loadFile=useCallback((file:File)=>{
     if(!videoElement)return;
@@ -113,6 +147,7 @@ export function useLocalVideo(){
       const stream=await navigator.mediaDevices.getDisplayMedia({video:{frameRate:{ideal:60}},audio:true});
       if(token!==generation.current){stream.getTracks().forEach(t=>t.stop());return;}
       clearMedia();
+      isLocalScreenShare.current=true;
       streamRef.current=stream;
       videoElement.srcObject=stream;
       videoElement.play().catch(e=>console.warn(e));

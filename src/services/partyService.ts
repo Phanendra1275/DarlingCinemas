@@ -350,6 +350,8 @@ export class PartyService {
   private cachedMembers: Record<string, RoomMember> = {};
   private cachedMedia: RoomMedia | null = null;
   private signalListeners: Set<(fromUid: string, signalData: any) => void> = new Set();
+  private processedSignalIds: Set<string> = new Set();
+  private activeSignalsUnsub: (() => void) | null = null;
 
   private unsubscribers: Array<() => void> = [];
   private roomChangeListeners: Set<(roomCode: string | null) => void> = new Set();
@@ -364,9 +366,43 @@ export class PartyService {
 
   private notifyRoomChange(code: string | null) {
     this.activeRoomCode = code;
+    this.setupSignalsListener(code);
     this.roomChangeListeners.forEach(cb => {
       try { cb(code); } catch (e) { console.warn('Room change listener error:', e); }
     });
+  }
+
+  private setupSignalsListener(code: string | null) {
+    if (this.activeSignalsUnsub) {
+      this.activeSignalsUnsub();
+      this.activeSignalsUnsub = null;
+    }
+    if (!code) return;
+
+    if (this.db) {
+      try {
+        const uid = this.getUid();
+        const mySignalsRef = ref(this.db, `rooms/${code}/signals/${uid}`);
+        const firebaseUnsub = onChildAdded(mySignalsRef, (snap) => {
+          const val = snap.val();
+          if (val && val.from && val.signal) {
+            const sigId = val.id || snap.key;
+            if (sigId && this.processedSignalIds.has(sigId)) {
+              remove(snap.ref).catch(() => {});
+              return;
+            }
+            if (sigId) this.processedSignalIds.add(sigId);
+            this.signalListeners.forEach(cb => {
+              try { cb(val.from, val.signal); } catch (e) { console.warn('Signal listener error:', e); }
+            });
+            remove(snap.ref).catch(() => {});
+          }
+        });
+        this.activeSignalsUnsub = () => firebaseUnsub();
+      } catch (err) {
+        console.warn('Firebase signals subscription failed:', err);
+      }
+    }
   }
 
   constructor() {
@@ -488,39 +524,39 @@ export class PartyService {
 
   public sendSignal(toUid: string, signalData: any): void {
     if (!this.activeRoomCode) return;
-    if (this.useLocalFallback || !this.db) {
-      this.localBridge.sendSignal(this.getUid(), toUid, signalData);
-      return;
+    const sigId = `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const myUid = this.getUid();
+
+    // 1. Always dispatch via Local Broadcast Bridge for instant multi-tab sync
+    this.localBridge.sendSignal(myUid, toUid, signalData);
+
+    // 2. Also dispatch to Firebase RTDB for cross-device remote sync
+    if (this.db && !this.useLocalFallback) {
+      try {
+        const sigRef = push(ref(this.db, `rooms/${this.activeRoomCode}/signals/${toUid}`));
+        set(sigRef, {
+          id: sigId,
+          from: myUid,
+          signal: signalData,
+          timestamp: Date.now()
+        }).catch(() => {});
+      } catch (err) {
+        console.warn('Firebase sendSignal error:', err);
+      }
     }
-    const sigRef = push(ref(this.db, `rooms/${this.activeRoomCode}/signals/${toUid}`));
-    set(sigRef, {
-      from: this.getUid(),
-      signal: signalData,
-      timestamp: Date.now()
-    }).catch(() => {});
   }
 
   public onSignal(callback: (fromUid: string, signalData: any) => void): () => void {
     this.signalListeners.add(callback);
-    let unsubBackend: (() => void) | null = null;
+    const localUnsub = this.localBridge.onSignal(callback);
 
-    if (this.useLocalFallback || !this.db) {
-      unsubBackend = this.localBridge.onSignal(callback);
-    } else if (this.activeRoomCode && this.db) {
-      const mySignalsRef = ref(this.db, `rooms/${this.activeRoomCode}/signals/${this.getUid()}`);
-      const firebaseUnsub = onChildAdded(mySignalsRef, (snap) => {
-        const val = snap.val();
-        if (val && val.from && val.signal) {
-          callback(val.from, val.signal);
-          remove(snap.ref).catch(() => {});
-        }
-      });
-      unsubBackend = () => firebaseUnsub();
+    if (this.activeRoomCode && !this.activeSignalsUnsub) {
+      this.setupSignalsListener(this.activeRoomCode);
     }
 
     return () => {
       this.signalListeners.delete(callback);
-      unsubBackend?.();
+      localUnsub();
     };
   }
 
