@@ -186,7 +186,7 @@ export default function Theatre(props:TheatreProps){
  }
  multiplayer.attachToRoom();
 
- let id=0,last=performance.now(),fpsAt=last,count=0,previousSettings=props.cameraSettings,lastPresencePush=0;
+ let id=0,last=performance.now(),fpsAt=last,count=0,previousSettings=props.cameraSettings,lastPresencePush=0,lastPartyCode:string|null=null;
 
  function frame(t:number){
   id=requestAnimationFrame(frame);

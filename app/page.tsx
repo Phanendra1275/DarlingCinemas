@@ -55,11 +55,22 @@ export default function Home(){
       return ()=>clearTimeout(fadeTimer);
   },[]);
 
-  // Subscribe to watch party state and stream changes
+  // Listen for room code and host changes
   useEffect(() => {
+    const unsub = partyService.onRoomChange((code) => {
+      setActivePartyCode(code);
+      setIsHost(partyService.getIsHost());
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  // Subscribe to active room media and playback
+  useEffect(() => {
+    if (!activePartyCode) return;
     const unsub = partyService.subscribeToRoom({
       onMeta: (meta) => {
-        setActivePartyCode(meta.code);
         setIsHost(meta.hostId === partyService.getUid());
       },
       onMedia: (roomMedia) => {
@@ -73,7 +84,7 @@ export default function Home(){
     return () => {
       unsub();
     };
-  }, [media]);
+  }, [activePartyCode, media]);
 
   const enterFromLanding = () => {
       setAppState('LOADING');
@@ -304,6 +315,10 @@ export default function Home(){
        setPanel('player');
      }}
      onToast={setNotice}
+     onRoomChange={(code) => {
+       setActivePartyCode(code);
+       setIsHost(partyService.getIsHost());
+     }}
    />
   {dev&&<details className="dc-debug"><summary>Camera tuning</summary><button onClick={()=>{stand();setRoute({id:"CANTEEN",request:Date.now()});}}>Walk to canteen (QA)</button><button onClick={()=>{setCamera(REFERENCE_GEOMETRY_VIEW);}}>Load Reference Camera</button><button onClick={async()=>{const response=await fetch("/qa/cinema-qa.mp4");load(new File([await response.blob()],"Generated QA clip.mp4",{type:"video/mp4"}));}}>Load generated QA clip</button>{Object.entries(camera).map(([key,value])=><label key={key}>{key}<input type="number" step={key==='sensitivity'?'.001':'.1'} value={value} onChange={e=>setCamera({...camera,[key]:+e.target.value})}/></label>)}</details>}
   {appState !== 'EXPLORING' && <div className="dc-backdrop" style={{zIndex:100, transition: 'opacity 1.5s ease', opacity: appState==='THEATRE_LOADING'?0:1, backgroundColor: appState==='INTRO'||appState==='LANDING'||appState==='LOADING'||appState==='RETURNING_USER'?'transparent':'#14120f', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>

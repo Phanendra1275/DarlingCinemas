@@ -31,6 +31,7 @@ interface WatchPartyDrawerProps {
   onOpenChat: () => void;
   onChangeMovie?: () => void;
   onToast: (msg: string) => void;
+  onRoomChange?: (roomCode: string | null) => void;
 }
 
 export function WatchPartyDrawer({
@@ -44,7 +45,8 @@ export function WatchPartyDrawer({
   onSelectSeat,
   onOpenChat,
   onChangeMovie,
-  onToast
+  onToast,
+  onRoomChange
 }: WatchPartyDrawerProps) {
   const [activeTab, setActiveTab] = useState<'create' | 'join'>('create');
   const [roomTitle, setRoomTitle] = useState('A little movie night');
@@ -69,6 +71,8 @@ export function WatchPartyDrawer({
 
   useEffect(() => {
     setActiveCode(partyService.getActiveRoom());
+    const unsub = partyService.onRoomChange((code) => setActiveCode(code));
+    return () => unsub();
   }, [isOpen]);
 
   // Subscribe to room updates when drawer is open
@@ -100,6 +104,7 @@ export function WatchPartyDrawer({
         { title: currentMediaTitle || 'The Quiet Hours' }
       );
       setActiveCode(code);
+      onRoomChange?.(code);
       onToast(`Watch party created! Room code: ${code}`);
     } catch (err: any) {
       onToast(err.message || 'Failed to create room.');
@@ -121,8 +126,10 @@ export function WatchPartyDrawer({
         gender: gender as any
       });
       if (res.success) {
-        setActiveCode(joinCodeInput.trim().toUpperCase());
-        onToast(`Joined Cinema Room ${joinCodeInput.trim().toUpperCase()}!`);
+        const cleanCode = joinCodeInput.trim().toUpperCase();
+        setActiveCode(cleanCode);
+        onRoomChange?.(cleanCode);
+        onToast(`Joined Cinema Room ${cleanCode}!`);
       } else {
         onToast(res.error || 'Could not join room.');
       }
@@ -139,6 +146,7 @@ export function WatchPartyDrawer({
     setRoomMeta(null);
     setMembers({});
     setSeats({});
+    onRoomChange?.(null);
     onToast('You left the watch party.');
   };
 

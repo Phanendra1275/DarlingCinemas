@@ -54,16 +54,32 @@ class LocalPartyBridge {
   private channel: BroadcastChannel | null = null;
   private roomCode: string | null = null;
   private listeners: Map<string, Set<(val: any) => void>> = new Map();
+  private cache: Record<string, any> = {};
 
   constructor() {
-    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
-      this.channel = new BroadcastChannel('darling_cinema_party_sync');
-      this.channel.onmessage = (event) => {
-        const { type, roomCode, path, value } = event.data || {};
-        if (roomCode === this.roomCode) {
-          this.triggerListeners(path, value);
+    if (typeof window !== 'undefined') {
+      if ('BroadcastChannel' in window) {
+        this.channel = new BroadcastChannel('darling_cinema_party_sync');
+        this.channel.onmessage = (event) => {
+          const { roomCode, path, value, doc } = event.data || {};
+          if (roomCode === this.roomCode) {
+            if (doc) {
+              this.cache = doc;
+            }
+            this.triggerListeners(path, value);
+          }
+        };
+      }
+
+      // Also listen to window storage event for cross-tab sync
+      window.addEventListener('storage', (event) => {
+        if (event.key === `dc_room:${this.roomCode}` && event.newValue) {
+          try {
+            this.cache = JSON.parse(event.newValue);
+            this.triggerAllListeners();
+          } catch {}
         }
-      };
+      });
 
       // Handle graceful tab close in local mode
       window.addEventListener('beforeunload', () => {
@@ -77,49 +93,95 @@ class LocalPartyBridge {
 
   public setRoom(code: string) {
     this.roomCode = code;
+    this.cache = this.readStorage();
   }
 
   public getRoom(): string | null {
     return this.roomCode;
   }
 
-  private storageKey(path: string): string {
-    return `dc_rtdb:${this.roomCode}:${path}`;
-  }
-
-  public get(path: string): any {
-    if (typeof window === 'undefined') return null;
+  private readStorage(): Record<string, any> {
+    if (typeof window === 'undefined' || !this.roomCode) return {};
     try {
-      const item = localStorage.getItem(this.storageKey(path));
-      return item ? JSON.parse(item) : null;
+      const raw = localStorage.getItem(`dc_room:${this.roomCode}`);
+      return raw ? JSON.parse(raw) : {};
     } catch {
-      return null;
+      return {};
     }
   }
 
-  public set(path: string, value: any): void {
-    if (typeof window === 'undefined') return;
+  private writeStorage(doc: Record<string, any>) {
+    if (typeof window === 'undefined' || !this.roomCode) return;
+    this.cache = doc;
     try {
+      localStorage.setItem(`dc_room:${this.roomCode}`, JSON.stringify(doc));
+    } catch (e) {
+      console.warn('writeStorage failed:', e);
+    }
+  }
+
+  public get(path?: string): any {
+    if (!this.cache || Object.keys(this.cache).length === 0) {
+      this.cache = this.readStorage();
+    }
+    const doc = this.cache;
+    if (!path || path === '/' || path === '.') return doc;
+    const parts = path.split('/').filter(Boolean);
+    let cur: any = doc;
+    for (const part of parts) {
+      if (cur === null || cur === undefined || typeof cur !== 'object') return null;
+      cur = cur[part];
+    }
+    return cur !== undefined ? cur : null;
+  }
+
+  public set(path: string, value: any): void {
+    if (typeof window === 'undefined' || !this.roomCode) return;
+    const doc = this.readStorage();
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length === 0) return;
+
+    if (parts.length === 1) {
       if (value === null || value === undefined) {
-        localStorage.removeItem(this.storageKey(path));
+        delete doc[parts[0]];
       } else {
-        localStorage.setItem(this.storageKey(path), JSON.stringify(value));
+        doc[parts[0]] = value;
       }
+    } else {
+      let cur = doc;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        if (!cur[part] || typeof cur[part] !== 'object') {
+          cur[part] = {};
+        }
+        cur = cur[part];
+      }
+      const last = parts[parts.length - 1];
+      if (value === null || value === undefined) {
+        delete cur[last];
+      } else {
+        cur[last] = value;
+      }
+    }
+
+    this.writeStorage(doc);
+
+    try {
       this.channel?.postMessage({
         type: 'SET',
         roomCode: this.roomCode,
         path,
-        value
+        value,
+        doc
       });
-      this.triggerListeners(path, value);
-    } catch (e) {
-      console.warn('LocalPartyBridge set failed:', e);
-    }
+    } catch {}
+
+    this.triggerListeners(path, value);
   }
 
   public update(path: string, partial: Record<string, any>): void {
-    const current = this.get(path) || {};
-    const updated = { ...current, ...partial };
+    const cur = this.get(path) || {};
+    const updated = { ...cur, ...partial };
     this.set(path, updated);
   }
 
@@ -135,9 +197,7 @@ class LocalPartyBridge {
 
   public push(path: string, item: any): string {
     const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const collection = this.get(path) || {};
-    collection[id] = { ...item, id };
-    this.set(path, collection);
+    this.set(`${path}/${id}`, { ...item, id });
     return id;
   }
 
@@ -152,18 +212,37 @@ class LocalPartyBridge {
     };
   }
 
+  public triggerAllListeners() {
+    this.listeners.forEach((set, path) => {
+      const val = this.get(path);
+      set.forEach(cb => {
+        try { cb(val); } catch {}
+      });
+    });
+  }
+
   private triggerListeners(path: string, value: any) {
-    // Notify direct listeners
+    // 1. Direct path listeners (e.g. 'members/uid')
     this.listeners.get(path)?.forEach(cb => {
       try { cb(value); } catch {}
     });
 
-    // Notify root or parent listeners if path is child
+    // 2. Parent path listeners (e.g. 'members' when 'members/uid' updated)
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length > 1) {
+      const parentPath = parts[0];
+      const parentVal = this.get(parentPath);
+      this.listeners.get(parentPath)?.forEach(cb => {
+        try { cb(parentVal); } catch {}
+      });
+    }
+
+    // 3. Child path listeners (e.g. 'members/uid' when entire 'members' updated)
     this.listeners.forEach((set, listenerPath) => {
-      if (path.startsWith(listenerPath + '/') || listenerPath.startsWith(path + '/')) {
-        const fullVal = this.get(listenerPath);
+      if (listenerPath.startsWith(path + '/')) {
+        const childVal = this.get(listenerPath);
         set.forEach(cb => {
-          try { cb(fullVal); } catch {}
+          try { cb(childVal); } catch {}
         });
       }
     });
@@ -207,6 +286,22 @@ export class PartyService {
   private poseThrottleTimer: any = null;
 
   private unsubscribers: Array<() => void> = [];
+  private roomChangeListeners: Set<(roomCode: string | null) => void> = new Set();
+
+  public onRoomChange(listener: (roomCode: string | null) => void): () => void {
+    this.roomChangeListeners.add(listener);
+    listener(this.activeRoomCode);
+    return () => {
+      this.roomChangeListeners.delete(listener);
+    };
+  }
+
+  private notifyRoomChange(code: string | null) {
+    this.activeRoomCode = code;
+    this.roomChangeListeners.forEach(cb => {
+      try { cb(code); } catch (e) { console.warn('Room change listener error:', e); }
+    });
+  }
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -385,9 +480,9 @@ export class PartyService {
           this.leaveRoom();
         });
 
-        this.activeRoomCode = code;
         this.isHost = true;
         this.activeSeatId = null;
+        this.notifyRoomChange(code);
         return code;
       }
 
@@ -409,9 +504,9 @@ export class PartyService {
         });
 
         if (txnResult.committed) {
-          this.activeRoomCode = code;
           this.isHost = true;
           this.activeSeatId = null;
+          this.notifyRoomChange(code);
 
           const initialMediaData: RoomMedia = {
             id: initialMedia?.id || 'default-cinema',
@@ -502,9 +597,9 @@ export class PartyService {
         this.leaveRoom();
       });
 
-      this.activeRoomCode = cleanCode;
       this.isHost = meta.hostId === uid;
       this.activeSeatId = null;
+      this.notifyRoomChange(cleanCode);
 
       // Broadcast welcome join message
       this.sendChatMessage(`🎟️ ${this.currentUserName} joined the cinema.`);
@@ -548,9 +643,9 @@ export class PartyService {
       await onDisconnect(ref(this.db, `rooms/${cleanCode}/members/${uid}`)).remove();
       await onDisconnect(ref(this.db, `rooms/${cleanCode}/poses/${uid}`)).remove();
 
-      this.activeRoomCode = cleanCode;
       this.isHost = meta.hostId === uid;
       this.activeSeatId = null;
+      this.notifyRoomChange(cleanCode);
 
       this.sendChatMessage(`🎟️ ${this.currentUserName} joined the cinema.`);
       return { success: true };
@@ -588,9 +683,9 @@ export class PartyService {
     }
 
     this.unsubscribeAll();
-    this.activeRoomCode = null;
     this.activeSeatId = null;
     this.isHost = false;
+    this.notifyRoomChange(null);
   }
 
   /**

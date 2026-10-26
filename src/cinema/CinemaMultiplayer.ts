@@ -128,6 +128,14 @@ export class CinemaMultiplayer {
     this.onSitConfirmed = options.onSitConfirmed;
 
     this.createSeatIndicators();
+
+    partyService.onRoomChange((code) => {
+      if (code) {
+        this.attachToRoom();
+      } else {
+        this.detach();
+      }
+    });
   }
 
   private createSeatIndicators() {
@@ -222,6 +230,13 @@ export class CinemaMultiplayer {
         avatar.root.add(nameTag.sprite);
         this.scene.add(avatar.root);
 
+        const initialPose = this.activePoses[uid];
+        const seatedRecliner = member.seatId ? seats.find(s => s.id === member.seatId) : null;
+        const initialX = seatedRecliner ? seatedRecliner.sitPosition.x : (initialPose ? initialPose.x : 6.45);
+        const initialY = seatedRecliner ? seatedRecliner.sitPosition.y : (initialPose ? initialPose.y : 0.32);
+        const initialZ = seatedRecliner ? seatedRecliner.sitPosition.z : (initialPose ? initialPose.z : 5.9);
+        const initialYaw = initialPose ? initialPose.yaw : 0;
+
         rig = {
           id: uid,
           name: member.name,
@@ -230,14 +245,15 @@ export class CinemaMultiplayer {
           seatId: member.seatId,
           avatar,
           nameTag,
-          currentPos: new THREE.Vector3(6.45, 0.32, 5.9),
-          targetPos: new THREE.Vector3(6.45, 0.32, 5.9),
-          currentYaw: 0,
-          targetYaw: 0,
-          state: member.seatId ? 'seated' : 'standing',
+          currentPos: new THREE.Vector3(initialX, initialY, initialZ),
+          targetPos: new THREE.Vector3(initialX, initialY, initialZ),
+          currentYaw: initialYaw,
+          targetYaw: initialYaw,
+          state: member.seatId ? 'seated' : (initialPose?.state || 'standing'),
           walkPhase: 0
         };
         rig.avatar.root.position.copy(rig.currentPos);
+        rig.avatar.root.rotation.y = initialYaw;
         this.remoteAvatars.set(uid, rig);
       }
 
@@ -261,7 +277,11 @@ export class CinemaMultiplayer {
     const localUid = partyService.getUid();
     for (const [uid, pose] of Object.entries(this.activePoses)) {
       if (uid === localUid) continue;
-      const rig = this.remoteAvatars.get(uid);
+      let rig = this.remoteAvatars.get(uid);
+      if (!rig && this.activeMembers[uid]) {
+        this.syncRemoteAvatars();
+        rig = this.remoteAvatars.get(uid);
+      }
       if (!rig) continue;
 
       rig.targetPos.set(pose.x, pose.y, pose.z);
@@ -381,7 +401,12 @@ export class CinemaMultiplayer {
       }
 
       // Standing / Walking in the theatre
-      rig.avatar.root.position.lerp(rig.targetPos, blend);
+      const dist = rig.avatar.root.position.distanceTo(rig.targetPos);
+      if (dist > 3.5) {
+        rig.avatar.root.position.copy(rig.targetPos);
+      } else {
+        rig.avatar.root.position.lerp(rig.targetPos, blend);
+      }
       const angleDiff = Math.atan2(
         Math.sin(rig.targetYaw - rig.avatar.root.rotation.y),
         Math.cos(rig.targetYaw - rig.avatar.root.rotation.y)
