@@ -114,19 +114,19 @@ export function WatchPartyDrawer({
   };
 
   const handleJoinParty = async () => {
-    if (joinCodeInput.trim().length !== 6) {
+    const cleanCode = joinCodeInput.trim().toUpperCase();
+    if (cleanCode.length !== 6) {
       onToast('Please enter a valid 6-character room code.');
       return;
     }
     setIsLoading(true);
     try {
-      const res = await partyService.joinRoom(joinCodeInput, {
+      const res = await partyService.joinRoom(cleanCode, {
         name: displayNameInput || userName,
         color: userColor,
         gender: gender as any
       });
       if (res.success) {
-        const cleanCode = joinCodeInput.trim().toUpperCase();
         setActiveCode(cleanCode);
         onRoomChange?.(cleanCode);
         onToast(`Joined Cinema Room ${cleanCode}!`);

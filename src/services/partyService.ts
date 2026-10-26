@@ -51,18 +51,22 @@ export function generateRoomCode(): string {
   return code;
 }
 
-// Local multi-device & multi-tab fallback bridge (Server API + BroadcastChannel + localStorage)
+// Local multi-device & multi-tab fallback bridge (Server API + BroadcastChannel + Cloud Pub/Sub + WebSocket)
 class LocalPartyBridge {
   private channel: BroadcastChannel | null = null;
+  private ws: WebSocket | null = null;
+  private wsReconnectTimer: any = null;
   private roomCode: string | null = null;
   private listeners: Map<string, Set<(val: any) => void>> = new Map();
   private cache: Record<string, any> = {};
   private currentUid: string | null = null;
   private signalListeners: Set<(fromUid: string, signalData: any) => void> = new Set();
   private processedSignals: Set<string> = new Set();
+  private processedMsgIds: Set<string> = new Set();
   private pollTimer: any = null;
   private isPolling = false;
   private lastPoseSent = 0;
+  private disconnectHandlers: Array<() => void> = [];
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -126,12 +130,14 @@ class LocalPartyBridge {
   }
 
   public setRoom(code: string, initialDoc?: Record<string, any>) {
-    this.roomCode = code;
+    const clean = code.trim().toUpperCase();
+    this.roomCode = clean;
     if (initialDoc) {
       this.writeStorage(initialDoc);
     } else {
       this.cache = this.readStorage();
     }
+    this.connectCloudWs();
     this.startServerPoll();
   }
 
@@ -139,8 +145,269 @@ class LocalPartyBridge {
     return this.roomCode;
   }
 
+  public close() {
+    this.stopPolling();
+    if (this.wsReconnectTimer) {
+      clearTimeout(this.wsReconnectTimer);
+      this.wsReconnectTimer = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+    this.roomCode = null;
+    this.cache = {};
+  }
+
+  public connectCloudWs() {
+    if (typeof window === 'undefined' || !this.roomCode) return;
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+
+    try {
+      const topic = `dc_party_${encodeURIComponent(this.roomCode)}`;
+      const wsUrl = `wss://ntfy.sh/${topic}/ws`;
+      const ws = new WebSocket(wsUrl);
+      this.ws = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const raw = JSON.parse(event.data);
+          if (raw.id && this.processedMsgIds.has(raw.id)) return;
+          if (raw.id) this.processedMsgIds.add(raw.id);
+
+          if (raw.event === 'message' && raw.message) {
+            let payload: any;
+            try {
+              payload = JSON.parse(raw.message);
+            } catch {
+              payload = raw.message;
+            }
+            if (payload && typeof payload === 'object') {
+              this.handleCloudMessage(payload);
+            }
+          }
+        } catch (e) {
+          console.warn('ws message parse error:', e);
+        }
+      };
+
+      ws.onerror = () => {};
+
+      ws.onclose = () => {
+        if (this.roomCode && this.ws === ws) {
+          clearTimeout(this.wsReconnectTimer);
+          this.wsReconnectTimer = setTimeout(() => {
+            if (this.roomCode) this.connectCloudWs();
+          }, 2000);
+        }
+      };
+    } catch (err) {
+      console.warn('connectCloudWs error:', err);
+    }
+  }
+
+  public handleCloudMessage(payload: any) {
+    if (!payload || typeof payload !== 'object') return;
+    if (payload.senderUid && payload.senderUid === this.currentUid) return;
+
+    const { type } = payload;
+
+    if (type === 'SIGNAL') {
+      if (payload.to === this.currentUid) {
+        if (payload.id && this.processedSignals.has(payload.id)) return;
+        if (payload.id) this.processedSignals.add(payload.id);
+        this.triggerSignal(payload.from, payload.signal);
+      }
+      return;
+    }
+
+    if (type === 'INIT_DOC' && payload.doc) {
+      this.mergeServerDoc(payload.doc);
+      return;
+    }
+
+    if (type === 'JOIN_MEMBER' && payload.uid && payload.member) {
+      if (!this.cache.members) this.cache.members = {};
+      this.cache.members[payload.uid] = payload.member;
+      this.writeStorage(this.cache);
+      this.triggerListeners('members', this.cache.members);
+      this.triggerListeners(`members/${payload.uid}`, payload.member);
+      return;
+    }
+
+    if (type === 'LEAVE_MEMBER' && payload.uid) {
+      if (this.cache.members && this.cache.members[payload.uid]) {
+        delete this.cache.members[payload.uid];
+        this.writeStorage(this.cache);
+        this.triggerListeners('members', this.cache.members);
+        this.triggerListeners(`members/${payload.uid}`, null);
+      }
+      if (this.cache.poses && this.cache.poses[payload.uid]) {
+        delete this.cache.poses[payload.uid];
+        this.triggerListeners('poses', this.cache.poses);
+      }
+      return;
+    }
+
+    if (type === 'CLAIM_SEAT' && payload.seatId && payload.uid) {
+      if (!this.cache.seats) this.cache.seats = {};
+      this.cache.seats[payload.seatId] = payload.uid;
+      if (this.cache.members && this.cache.members[payload.uid]) {
+        this.cache.members[payload.uid].seatId = payload.seatId;
+        this.triggerListeners('members', this.cache.members);
+      }
+      this.writeStorage(this.cache);
+      this.triggerListeners('seats', this.cache.seats);
+      this.triggerListeners(`seats/${payload.seatId}`, payload.uid);
+      return;
+    }
+
+    if (type === 'RELEASE_SEAT' && payload.seatId) {
+      if (!this.cache.seats) this.cache.seats = {};
+      this.cache.seats[payload.seatId] = null;
+      if (payload.uid && this.cache.members && this.cache.members[payload.uid]) {
+        this.cache.members[payload.uid].seatId = null;
+        this.triggerListeners('members', this.cache.members);
+      }
+      this.writeStorage(this.cache);
+      this.triggerListeners('seats', this.cache.seats);
+      this.triggerListeners(`seats/${payload.seatId}`, null);
+      return;
+    }
+
+    if (type === 'PLAYBACK' && payload.playback) {
+      this.cache.playback = payload.playback;
+      this.writeStorage(this.cache);
+      this.triggerListeners('playback', payload.playback);
+      return;
+    }
+
+    if (type === 'MEDIA' && payload.media) {
+      this.cache.media = payload.media;
+      this.writeStorage(this.cache);
+      this.triggerListeners('media', payload.media);
+      return;
+    }
+
+    if (type === 'SET' && payload.path !== undefined) {
+      const { path, value } = payload;
+      this.applyPathToDoc(this.cache, path, value);
+      this.writeStorage(this.cache);
+      this.triggerListeners(path, value);
+      return;
+    }
+
+    if (type === 'POSE' && payload.uid && payload.pose) {
+      if (!this.cache.poses) this.cache.poses = {};
+      this.cache.poses[payload.uid] = payload.pose;
+      this.triggerListeners('poses', this.cache.poses);
+      return;
+    }
+
+    if (type === 'CHAT' && payload.message) {
+      const msg = payload.message;
+      if (!this.cache.chat) this.cache.chat = {};
+      this.cache.chat[msg.id] = msg;
+      this.writeStorage(this.cache);
+      this.triggerListeners('chat', this.cache.chat);
+      return;
+    }
+  }
+
+  public publishCloud(event: any): void {
+    if (typeof window === 'undefined' || !this.roomCode) return;
+    const topic = `dc_party_${encodeURIComponent(this.roomCode)}`;
+    const payload = {
+      ...event,
+      senderUid: this.currentUid,
+      roomCode: this.roomCode,
+      timestamp: Date.now()
+    };
+    fetch(`https://ntfy.sh/${topic}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      cache: 'no-store'
+    }).catch(() => {});
+  }
+
+  public async publishCloudAsync(event: any): Promise<boolean> {
+    if (typeof window === 'undefined' || !this.roomCode) return false;
+    const topic = `dc_party_${encodeURIComponent(this.roomCode)}`;
+    const payload = {
+      ...event,
+      senderUid: this.currentUid,
+      roomCode: this.roomCode,
+      timestamp: Date.now()
+    };
+    try {
+      const res = await fetch(`https://ntfy.sh/${topic}`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        cache: 'no-store'
+      });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   public async fetchFromServer(): Promise<Record<string, any> | null> {
     if (typeof window === 'undefined' || !this.roomCode) return null;
+
+    // 1. Query global cloud relay first so ANY device finds the room
+    try {
+      const topic = `dc_party_${encodeURIComponent(this.roomCode)}`;
+      const cloudRes = await fetch(`https://ntfy.sh/${topic}/json?poll=1&since=all`, {
+        cache: 'no-store'
+      });
+      if (cloudRes.ok) {
+        const text = await cloudRes.text();
+        const lines = text.trim().split('\n').filter(Boolean);
+        let cloudDoc: Record<string, any> | null = null;
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            if (parsed.event === 'message' && parsed.message) {
+              let msg: any;
+              try {
+                msg = JSON.parse(parsed.message);
+              } catch {
+                msg = parsed.message;
+              }
+              if (msg && msg.type === 'INIT_DOC' && msg.doc) {
+                cloudDoc = msg.doc;
+              } else if (cloudDoc && msg && msg.type === 'SET' && msg.path) {
+                this.applyPathToDoc(cloudDoc, msg.path, msg.value);
+              } else if (cloudDoc && msg && msg.type === 'CLAIM_SEAT' && msg.seatId && msg.uid) {
+                if (!cloudDoc.seats) cloudDoc.seats = {};
+                cloudDoc.seats[msg.seatId] = msg.uid;
+              } else if (cloudDoc && msg && msg.type === 'RELEASE_SEAT' && msg.seatId) {
+                if (!cloudDoc.seats) cloudDoc.seats = {};
+                cloudDoc.seats[msg.seatId] = null;
+              }
+            }
+          } catch {}
+        }
+        if (cloudDoc && cloudDoc.meta) {
+          this.writeStorage(cloudDoc);
+          this.triggerAllListeners();
+          return cloudDoc;
+        }
+      }
+    } catch (e) {
+      console.warn('fetchFromServer cloud relay warning:', e);
+    }
+
+    // 2. Query local server API fallback
     try {
       const uid = this.currentUid || (typeof window !== 'undefined' ? sessionStorage.getItem('darling_party_uid') : '') || '';
       const res = await fetch(`/api/party?code=${encodeURIComponent(this.roomCode)}&user=${encodeURIComponent(uid)}`);
@@ -153,7 +420,7 @@ class LocalPartyBridge {
         }
       }
     } catch (e) {
-      console.warn('fetchFromServer error:', e);
+      console.warn('fetchFromServer local error:', e);
     }
     return null;
   }
@@ -192,7 +459,7 @@ class LocalPartyBridge {
     };
 
     setTimeout(poll, 60);
-    this.pollTimer = setInterval(poll, 300);
+    this.pollTimer = setInterval(poll, 400);
   }
 
   public stopPolling() {
@@ -302,6 +569,36 @@ class LocalPartyBridge {
     }
   }
 
+  public applyPathToDoc(doc: Record<string, any>, path: string, value: any): void {
+    if (!doc || !path) return;
+    const parts = path.split('/').filter(Boolean);
+    if (parts.length === 0) return;
+
+    if (parts.length === 1) {
+      if (value === null || value === undefined) {
+        delete doc[parts[0]];
+      } else {
+        doc[parts[0]] = value;
+      }
+      return;
+    }
+
+    let cur = doc;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      if (!cur[part] || typeof cur[part] !== 'object') {
+        cur[part] = {};
+      }
+      cur = cur[part];
+    }
+    const last = parts[parts.length - 1];
+    if (value === null || value === undefined) {
+      delete cur[last];
+    } else {
+      cur[last] = value;
+    }
+  }
+
   public get(path?: string): any {
     if (!this.cache || Object.keys(this.cache).length === 0) {
       this.cache = this.readStorage();
@@ -320,32 +617,7 @@ class LocalPartyBridge {
   public set(path: string, value: any): void {
     if (typeof window === 'undefined' || !this.roomCode) return;
     const doc = this.readStorage();
-    const parts = path.split('/').filter(Boolean);
-    if (parts.length === 0) return;
-
-    if (parts.length === 1) {
-      if (value === null || value === undefined) {
-        delete doc[parts[0]];
-      } else {
-        doc[parts[0]] = value;
-      }
-    } else {
-      let cur = doc;
-      for (let i = 0; i < parts.length - 1; i++) {
-        const part = parts[i];
-        if (!cur[part] || typeof cur[part] !== 'object') {
-          cur[part] = {};
-        }
-        cur = cur[part];
-      }
-      const last = parts[parts.length - 1];
-      if (value === null || value === undefined) {
-        delete cur[last];
-      } else {
-        cur[last] = value;
-      }
-    }
-
+    this.applyPathToDoc(doc, path, value);
     this.writeStorage(doc);
 
     try {
@@ -360,11 +632,29 @@ class LocalPartyBridge {
 
     this.triggerListeners(path, value);
 
-    // Sync to server API for cross-device discovery and sync
+    // Relay to cloud broker for cross-device synchronization
+    if (path.startsWith('poses/')) {
+      const now = performance.now();
+      if (now - this.lastPoseSent > 100) {
+        this.lastPoseSent = now;
+        this.publishCloud({
+          type: 'POSE',
+          uid: this.currentUid,
+          pose: value
+        });
+      }
+    } else {
+      this.publishCloud({
+        type: 'SET',
+        path,
+        value
+      });
+    }
+
+    // Local server API sync as secondary fallback
     if (path.startsWith('poses/')) {
       const now = performance.now();
       if (now - this.lastPoseSent > 120) {
-        this.lastPoseSent = now;
         fetch('/api/party', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -410,15 +700,20 @@ class LocalPartyBridge {
 
   public push(path: string, item: any): string {
     const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    this.set(`${path}/${id}`, { ...item, id });
+    const fullItem = { ...item, id };
+    this.set(`${path}/${id}`, fullItem);
     if (path === 'chat') {
+      this.publishCloud({
+        type: 'CHAT',
+        message: fullItem
+      });
       fetch('/api/party', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'chat',
           code: this.roomCode,
-          message: { ...item, id }
+          message: fullItem
         })
       }).catch(() => {});
     }
@@ -472,8 +767,6 @@ class LocalPartyBridge {
     });
   }
 
-  private disconnectHandlers: Array<() => void> = [];
-
   public onDisconnect(handler: () => void) {
     this.disconnectHandlers.push(handler);
   }
@@ -509,7 +802,16 @@ class LocalPartyBridge {
     doc.signals[toUid][signalId] = { id: signalId, from: fromUid, signal, timestamp: Date.now() };
     this.writeStorage(doc);
 
-    // Relay to server so remote devices can receive the WebRTC signal
+    // Relay to cloud broker for cross-device remote WebRTC signalling
+    this.publishCloud({
+      type: 'SIGNAL',
+      id: signalId,
+      from: fromUid,
+      to: toUid,
+      signal
+    });
+
+    // Also relay to local server API
     fetch('/api/party', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -855,7 +1157,7 @@ export class PartyService {
           this.leaveRoom();
         });
 
-        // Register room on server so ANY device can find and join it
+        // Register room on cloud relay & local server so ANY device can find and join it
         const fullDoc = {
           code,
           meta: newMeta,
@@ -866,6 +1168,8 @@ export class PartyService {
           poses: {},
           chat: {}
         };
+        await this.localBridge.publishCloudAsync({ type: 'INIT_DOC', doc: fullDoc });
+
         try {
           await fetch('/api/party', {
             method: 'POST',
@@ -945,23 +1249,27 @@ export class PartyService {
           await onDisconnect(ref(this.db, `rooms/${code}/members/${uid}`)).remove();
           await onDisconnect(ref(this.db, `rooms/${code}/poses/${uid}`)).remove();
 
-          // Also register on server as cross-device fallback
+          // Also register on cloud relay as cross-device fallback
+          const fullDoc = {
+            code,
+            meta: { code, title: title || 'A little movie night', hostId: uid, online: true, screening: false, createdAt: Date.now() },
+            media: initialMediaData,
+            playback: initialPlayback,
+            seats: initialSeats,
+            members: { [uid]: hostMember },
+            poses: {},
+            chat: {}
+          };
+          this.localBridge.setRoom(code, fullDoc);
+          this.localBridge.publishCloudAsync({ type: 'INIT_DOC', doc: fullDoc }).catch(() => {});
+
           fetch('/api/party', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               action: 'create_room',
               code,
-              doc: {
-                code,
-                meta: { code, title: title || 'A little movie night', hostId: uid, online: true, screening: false, createdAt: Date.now() },
-                media: initialMediaData,
-                playback: initialPlayback,
-                seats: initialSeats,
-                members: { [uid]: hostMember },
-                poses: {},
-                chat: {}
-              },
+              doc: fullDoc,
               guestName: this.currentUserName
             })
           }).catch(() => {});
@@ -1005,10 +1313,17 @@ export class PartyService {
       this.localBridge.setRoom(cleanCode);
       let meta = this.localBridge.get('meta') as RoomMeta | null;
       if (!meta) {
-        // Query server for room created on another device
-        const serverDoc = await this.localBridge.fetchFromServer();
-        if (serverDoc && serverDoc.meta) {
-          meta = serverDoc.meta as RoomMeta;
+        // Query cloud relay / server for room created on another device
+        // Retry up to 3 times to accommodate initial network handshake
+        for (let attempt = 0; attempt < 3; attempt++) {
+          if (attempt > 0) {
+            await new Promise(r => setTimeout(r, 400));
+          }
+          const serverDoc = await this.localBridge.fetchFromServer();
+          if (serverDoc && serverDoc.meta) {
+            meta = serverDoc.meta as RoomMeta;
+            break;
+          }
         }
       }
 
@@ -1023,6 +1338,11 @@ export class PartyService {
       }
 
       this.localBridge.set(`members/${uid}`, newMember);
+      await this.localBridge.publishCloudAsync({
+        type: 'JOIN_MEMBER',
+        uid,
+        member: newMember
+      });
 
       // Register join with server so host sees the guest on their screen
       try {
@@ -1058,7 +1378,7 @@ export class PartyService {
     try {
       const metaSnap = await get(ref(this.db, `rooms/${cleanCode}/meta`));
       if (!metaSnap.exists()) {
-        // Check if room exists in server or local bridge
+        // Check if room exists in cloud relay or local bridge
         this.localBridge.setRoom(cleanCode);
         const serverDoc = await this.localBridge.fetchFromServer();
         if (serverDoc || this.localBridge.get('meta')) {
@@ -1110,6 +1430,11 @@ export class PartyService {
     }
 
     if (this.useLocalFallback || !this.db) {
+      this.localBridge.publishCloud({
+        type: 'LEAVE_MEMBER',
+        uid
+      });
+
       fetch('/api/party', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1123,7 +1448,7 @@ export class PartyService {
       this.localBridge.set(`members/${uid}`, null);
       this.localBridge.set(`poses/${uid}`, null);
       this.localBridge.clearDisconnects();
-      this.localBridge.stopPolling();
+      this.localBridge.close();
     } else {
       try {
         await set(ref(this.db, `rooms/${code}/members/${uid}`), null);
@@ -1191,10 +1516,20 @@ export class PartyService {
       // If user had another seat, free previous seat
       if (this.activeSeatId && this.activeSeatId !== seatId) {
         this.localBridge.set(`seats/${this.activeSeatId}`, null);
+        this.localBridge.publishCloud({
+          type: 'RELEASE_SEAT',
+          seatId: this.activeSeatId,
+          uid
+        });
       }
 
       this.activeSeatId = seatId;
       this.localBridge.update(`members/${uid}`, { seatId });
+      this.localBridge.publishCloud({
+        type: 'CLAIM_SEAT',
+        seatId,
+        uid
+      });
       this.localBridge.onDisconnect(() => {
         this.localBridge.set(`seats/${seatId}`, null);
       });
@@ -1250,6 +1585,17 @@ export class PartyService {
     const uid = this.getUid();
 
     if (this.useLocalFallback || !this.db) {
+      const cur = this.localBridge.get(`seats/${target}`);
+      if (cur === uid) {
+        this.localBridge.set(`seats/${target}`, null);
+      }
+      this.localBridge.update(`members/${uid}`, { seatId: null });
+      this.localBridge.publishCloud({
+        type: 'RELEASE_SEAT',
+        seatId: target,
+        uid
+      });
+
       fetch('/api/party', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1260,12 +1606,6 @@ export class PartyService {
           uid
         })
       }).catch(() => {});
-
-      const cur = this.localBridge.get(`seats/${target}`);
-      if (cur === uid) {
-        this.localBridge.set(`seats/${target}`, null);
-      }
-      this.localBridge.update(`members/${uid}`, { seatId: null });
     } else {
       try {
         const seatRef = ref(this.db, `rooms/${code}/seats/${target}`);
@@ -1332,6 +1672,10 @@ export class PartyService {
 
     if (this.useLocalFallback || !this.db) {
       this.localBridge.set('playback', data);
+      this.localBridge.publishCloud({
+        type: 'PLAYBACK',
+        playback: data
+      });
     } else {
       await set(ref(this.db, `rooms/${code}/playback`), data).catch(console.warn);
     }
@@ -1345,12 +1689,21 @@ export class PartyService {
     const code = this.activeRoomCode;
 
     if (this.useLocalFallback || !this.db) {
-      this.localBridge.set('media', media);
-      this.localBridge.set('playback', {
+      const resetPlayback = {
         playing: false,
         time: 0,
         rate: 1.0,
         updatedAt: Date.now()
+      };
+      this.localBridge.set('media', media);
+      this.localBridge.set('playback', resetPlayback);
+      this.localBridge.publishCloud({
+        type: 'MEDIA',
+        media
+      });
+      this.localBridge.publishCloud({
+        type: 'PLAYBACK',
+        playback: resetPlayback
       });
     } else {
       await set(ref(this.db, `rooms/${code}/media`), media);
