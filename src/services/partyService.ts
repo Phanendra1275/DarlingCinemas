@@ -51,7 +51,7 @@ export function generateRoomCode(): string {
   return code;
 }
 
-// Local multi-tab fallback bridge (BroadcastChannel + localStorage) for instant multi-tab testing
+// Local multi-device & multi-tab fallback bridge (Server API + BroadcastChannel + localStorage)
 class LocalPartyBridge {
   private channel: BroadcastChannel | null = null;
   private roomCode: string | null = null;
@@ -60,9 +60,15 @@ class LocalPartyBridge {
   private currentUid: string | null = null;
   private signalListeners: Set<(fromUid: string, signalData: any) => void> = new Set();
   private processedSignals: Set<string> = new Set();
+  private pollTimer: any = null;
+  private isPolling = false;
+  private lastPoseSent = 0;
 
   constructor() {
     if (typeof window !== 'undefined') {
+      const cachedUid = sessionStorage.getItem('darling_party_uid');
+      if (cachedUid) this.currentUid = cachedUid;
+
       if ('BroadcastChannel' in window) {
         this.channel = new BroadcastChannel('darling_cinema_party_sync');
         this.channel.onmessage = (event) => {
@@ -119,13 +125,161 @@ class LocalPartyBridge {
     this.currentUid = uid;
   }
 
-  public setRoom(code: string) {
+  public setRoom(code: string, initialDoc?: Record<string, any>) {
     this.roomCode = code;
-    this.cache = this.readStorage();
+    if (initialDoc) {
+      this.writeStorage(initialDoc);
+    } else {
+      this.cache = this.readStorage();
+    }
+    this.startServerPoll();
   }
 
   public getRoom(): string | null {
     return this.roomCode;
+  }
+
+  public async fetchFromServer(): Promise<Record<string, any> | null> {
+    if (typeof window === 'undefined' || !this.roomCode) return null;
+    try {
+      const uid = this.currentUid || (typeof window !== 'undefined' ? sessionStorage.getItem('darling_party_uid') : '') || '';
+      const res = await fetch(`/api/party?code=${encodeURIComponent(this.roomCode)}&user=${encodeURIComponent(uid)}`);
+      if (res.ok) {
+        const data = (await res.json()) as any;
+        if (data && data.success && data.doc) {
+          this.writeStorage(data.doc);
+          this.triggerAllListeners();
+          return data.doc;
+        }
+      }
+    } catch (e) {
+      console.warn('fetchFromServer error:', e);
+    }
+    return null;
+  }
+
+  public startServerPoll() {
+    this.stopPolling();
+    if (typeof window === 'undefined' || !this.roomCode) return;
+
+    const poll = async () => {
+      if (!this.roomCode) return;
+      if (this.isPolling) return;
+      this.isPolling = true;
+
+      try {
+        const uid = this.currentUid || (typeof window !== 'undefined' ? sessionStorage.getItem('darling_party_uid') : '') || '';
+        const res = await fetch(`/api/party?code=${encodeURIComponent(this.roomCode)}&user=${encodeURIComponent(uid)}`);
+        if (res.ok) {
+          const data = (await res.json()) as any;
+          if (data && data.success && data.doc) {
+            this.mergeServerDoc(data.doc);
+          }
+          if (Array.isArray(data.signals) && data.signals.length > 0) {
+            for (const s of data.signals) {
+              if (s && s.id && !this.processedSignals.has(s.id)) {
+                this.processedSignals.add(s.id);
+                this.triggerSignal(s.from, s.data);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        // Network blip, continue polling
+      } finally {
+        this.isPolling = false;
+      }
+    };
+
+    setTimeout(poll, 60);
+    this.pollTimer = setInterval(poll, 300);
+  }
+
+  public stopPolling() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.isPolling = false;
+  }
+
+  public mergeServerDoc(serverDoc: Record<string, any>) {
+    if (!serverDoc || typeof serverDoc !== 'object') return;
+    let changed = false;
+
+    // 1. Meta
+    if (serverDoc.meta && JSON.stringify(serverDoc.meta) !== JSON.stringify(this.cache.meta)) {
+      this.cache.meta = serverDoc.meta;
+      this.triggerListeners('meta', this.cache.meta);
+      changed = true;
+    }
+
+    // 2. Media
+    if (serverDoc.media && JSON.stringify(serverDoc.media) !== JSON.stringify(this.cache.media)) {
+      this.cache.media = serverDoc.media;
+      this.triggerListeners('media', this.cache.media);
+      changed = true;
+    }
+
+    // 3. Playback
+    if (serverDoc.playback) {
+      const curTime = this.cache.playback?.updatedAt || 0;
+      const srvTime = serverDoc.playback?.updatedAt || 0;
+      if (srvTime >= curTime) {
+        if (JSON.stringify(serverDoc.playback) !== JSON.stringify(this.cache.playback)) {
+          this.cache.playback = serverDoc.playback;
+          this.triggerListeners('playback', this.cache.playback);
+          changed = true;
+        }
+      }
+    }
+
+    // 4. Seats
+    if (serverDoc.seats && JSON.stringify(serverDoc.seats) !== JSON.stringify(this.cache.seats)) {
+      this.cache.seats = serverDoc.seats;
+      this.triggerListeners('seats', this.cache.seats);
+      changed = true;
+    }
+
+    // 5. Members
+    if (serverDoc.members && JSON.stringify(serverDoc.members) !== JSON.stringify(this.cache.members)) {
+      if (!this.cache.members) this.cache.members = {};
+      for (const [mId, mVal] of Object.entries(serverDoc.members)) {
+        if (mId !== this.currentUid || !this.cache.members[mId]) {
+          this.cache.members[mId] = mVal;
+        }
+      }
+      this.triggerListeners('members', this.cache.members);
+      changed = true;
+    }
+
+    // 6. Poses
+    if (serverDoc.poses) {
+      if (!this.cache.poses) this.cache.poses = {};
+      let posesChanged = false;
+      for (const [pUid, pVal] of Object.entries(serverDoc.poses)) {
+        if (pUid !== this.currentUid) {
+          this.cache.poses[pUid] = pVal;
+          posesChanged = true;
+        }
+      }
+      if (posesChanged) {
+        this.triggerListeners('poses', this.cache.poses);
+      }
+    }
+
+    // 7. Chat
+    if (serverDoc.chat && JSON.stringify(serverDoc.chat) !== JSON.stringify(this.cache.chat)) {
+      this.cache.chat = { ...(this.cache.chat || {}), ...(serverDoc.chat || {}) };
+      this.triggerListeners('chat', this.cache.chat);
+      changed = true;
+    }
+
+    if (changed) {
+      try {
+        localStorage.setItem(`dc_room:${this.roomCode}`, JSON.stringify(this.cache));
+      } catch {}
+    }
   }
 
   private readStorage(): Record<string, any> {
@@ -205,6 +359,37 @@ class LocalPartyBridge {
     } catch {}
 
     this.triggerListeners(path, value);
+
+    // Sync to server API for cross-device discovery and sync
+    if (path.startsWith('poses/')) {
+      const now = performance.now();
+      if (now - this.lastPoseSent > 120) {
+        this.lastPoseSent = now;
+        fetch('/api/party', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'set',
+            code: this.roomCode,
+            path,
+            value,
+            uid: this.currentUid
+          })
+        }).catch(() => {});
+      }
+    } else {
+      fetch('/api/party', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set',
+          code: this.roomCode,
+          path,
+          value,
+          uid: this.currentUid
+        })
+      }).catch(() => {});
+    }
   }
 
   public update(path: string, partial: Record<string, any>): void {
@@ -226,6 +411,17 @@ class LocalPartyBridge {
   public push(path: string, item: any): string {
     const id = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     this.set(`${path}/${id}`, { ...item, id });
+    if (path === 'chat') {
+      fetch('/api/party', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'chat',
+          code: this.roomCode,
+          message: { ...item, id }
+        })
+      }).catch(() => {});
+    }
     return id;
   }
 
@@ -312,6 +508,20 @@ class LocalPartyBridge {
     if (!doc.signals[toUid]) doc.signals[toUid] = {};
     doc.signals[toUid][signalId] = { id: signalId, from: fromUid, signal, timestamp: Date.now() };
     this.writeStorage(doc);
+
+    // Relay to server so remote devices can receive the WebRTC signal
+    fetch('/api/party', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'signal',
+        code: this.roomCode,
+        id: signalId,
+        from: fromUid,
+        to: toUid,
+        signal
+      })
+    }).catch(() => {});
   }
 
   public onSignal(callback: (fromUid: string, signalData: any) => void): () => void {
@@ -418,11 +628,21 @@ export class PartyService {
 
   /**
    * Initializes Firebase App, Auth, and Database.
-   * Gracefully falls back to local multi-tab sync if Firebase is offline or unconfigured.
+   * Gracefully falls back to local/server sync if Firebase is offline or unconfigured.
    */
   public async init(): Promise<{ uid: string; isFallback: boolean }> {
     if (typeof window === 'undefined') {
       return { uid: 'ssr-uid', isFallback: true };
+    }
+
+    const isDummyFirebase = !process.env.NEXT_PUBLIC_FIREBASE_API_KEY ||
+      firebaseConfig.apiKey.includes('DarlingCinemasKey');
+
+    if (isDummyFirebase) {
+      this.useLocalFallback = true;
+      const uid = this.getUid();
+      this.localBridge.setUid(uid);
+      return { uid, isFallback: true };
     }
 
     try {
@@ -435,16 +655,15 @@ export class PartyService {
       this.db = getDatabase(this.app);
 
       // Anonymous authentication
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolve) => {
         const timeout = setTimeout(() => {
-          // If auth takes more than 3 seconds, proceed in fallback mode
           this.useLocalFallback = true;
           if (!this.uid) {
             this.uid = `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
             sessionStorage.setItem('darling_party_uid', this.uid);
           }
           resolve();
-        }, 3000);
+        }, 1200);
 
         onAuthStateChanged(this.auth!, async (user: User | null) => {
           clearTimeout(timeout);
@@ -463,7 +682,7 @@ export class PartyService {
               this.useLocalFallback = false;
               resolve();
             } catch (authErr) {
-              console.warn('Firebase anonymous auth failed, using local multi-tab bridge:', authErr);
+              console.warn('Firebase anonymous auth failed, using server bridge:', authErr);
               this.useLocalFallback = true;
               if (!this.uid) {
                 this.uid = `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
@@ -475,7 +694,7 @@ export class PartyService {
         });
       });
     } catch (err) {
-      console.warn('Firebase initialization error, activating local multi-tab bridge:', err);
+      console.warn('Firebase initialization error, activating server bridge:', err);
       this.useLocalFallback = true;
       if (!this.uid) {
         this.uid = `user_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 6)}`;
@@ -636,6 +855,32 @@ export class PartyService {
           this.leaveRoom();
         });
 
+        // Register room on server so ANY device can find and join it
+        const fullDoc = {
+          code,
+          meta: newMeta,
+          media: initialMediaData,
+          playback: initialPlayback,
+          seats: initialSeats,
+          members: { [uid]: hostMember },
+          poses: {},
+          chat: {}
+        };
+        try {
+          await fetch('/api/party', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'create_room',
+              code,
+              doc: fullDoc,
+              guestName: this.currentUserName
+            })
+          });
+        } catch (e) {
+          console.warn('Failed to register room on server:', e);
+        }
+
         this.isHost = true;
         this.activeSeatId = null;
         this.notifyRoomChange(code);
@@ -700,6 +945,27 @@ export class PartyService {
           await onDisconnect(ref(this.db, `rooms/${code}/members/${uid}`)).remove();
           await onDisconnect(ref(this.db, `rooms/${code}/poses/${uid}`)).remove();
 
+          // Also register on server as cross-device fallback
+          fetch('/api/party', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'create_room',
+              code,
+              doc: {
+                code,
+                meta: { code, title: title || 'A little movie night', hostId: uid, online: true, screening: false, createdAt: Date.now() },
+                media: initialMediaData,
+                playback: initialPlayback,
+                seats: initialSeats,
+                members: { [uid]: hostMember },
+                poses: {},
+                chat: {}
+              },
+              guestName: this.currentUserName
+            })
+          }).catch(() => {});
+
           return code;
         }
       } catch (err) {
@@ -725,9 +991,27 @@ export class PartyService {
     this.currentUserName = guestProfile.name || 'Guest';
     this.currentUserColor = guestProfile.color || '#c8bea9';
 
+    const newMember: RoomMember = {
+      id: uid,
+      name: this.currentUserName,
+      color: this.currentUserColor,
+      seatId: null,
+      joinedAt: Date.now(),
+      muted: false,
+      gender: guestProfile.gender || 'Male'
+    };
+
     if (this.useLocalFallback || !this.db) {
       this.localBridge.setRoom(cleanCode);
-      const meta = this.localBridge.get('meta') as RoomMeta | null;
+      let meta = this.localBridge.get('meta') as RoomMeta | null;
+      if (!meta) {
+        // Query server for room created on another device
+        const serverDoc = await this.localBridge.fetchFromServer();
+        if (serverDoc && serverDoc.meta) {
+          meta = serverDoc.meta as RoomMeta;
+        }
+      }
+
       if (!meta) {
         return { success: false, error: 'Cinema room not found. Check the 6-character code.' };
       }
@@ -738,16 +1022,24 @@ export class PartyService {
         return { success: false, error: 'Room is at full capacity (10 / 10 recliners occupied).' };
       }
 
-      const newMember: RoomMember = {
-        id: uid,
-        name: this.currentUserName,
-        color: this.currentUserColor,
-        seatId: null,
-        joinedAt: Date.now(),
-        muted: false,
-        gender: guestProfile.gender || 'Male'
-      };
       this.localBridge.set(`members/${uid}`, newMember);
+
+      // Register join with server so host sees the guest on their screen
+      try {
+        await fetch('/api/party', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'join_room',
+            code: cleanCode,
+            uid,
+            guestName: this.currentUserName,
+            member: newMember
+          })
+        });
+      } catch (err) {
+        console.warn('Could not register join on server:', err);
+      }
 
       this.localBridge.onDisconnect(() => {
         this.leaveRoom();
@@ -766,9 +1058,10 @@ export class PartyService {
     try {
       const metaSnap = await get(ref(this.db, `rooms/${cleanCode}/meta`));
       if (!metaSnap.exists()) {
-        // Check if room exists in local bridge
+        // Check if room exists in server or local bridge
         this.localBridge.setRoom(cleanCode);
-        if (this.localBridge.get('meta')) {
+        const serverDoc = await this.localBridge.fetchFromServer();
+        if (serverDoc || this.localBridge.get('meta')) {
           this.useLocalFallback = true;
           return this.joinRoom(cleanCode, guestProfile);
         }
@@ -784,15 +1077,6 @@ export class PartyService {
         return { success: false, error: 'Room is at full capacity (10 / 10 recliners occupied).' };
       }
 
-      const newMember: RoomMember = {
-        id: uid,
-        name: this.currentUserName,
-        color: this.currentUserColor,
-        seatId: null,
-        joinedAt: Date.now(),
-        muted: false,
-        gender: guestProfile.gender || 'Male'
-      };
       await set(ref(this.db, `rooms/${cleanCode}/members/${uid}`), newMember);
 
       // OnDisconnect handlers
@@ -806,7 +1090,7 @@ export class PartyService {
       this.sendChatMessage(`🎟️ ${this.currentUserName} joined the cinema.`);
       return { success: true };
     } catch (err: any) {
-      console.warn('Firebase join failed, trying local bridge:', err);
+      console.warn('Firebase join failed, trying server/local bridge:', err);
       this.useLocalFallback = true;
       return this.joinRoom(cleanCode, guestProfile);
     }
@@ -826,9 +1110,20 @@ export class PartyService {
     }
 
     if (this.useLocalFallback || !this.db) {
+      fetch('/api/party', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'leave',
+          code,
+          uid
+        })
+      }).catch(() => {});
+
       this.localBridge.set(`members/${uid}`, null);
       this.localBridge.set(`poses/${uid}`, null);
       this.localBridge.clearDisconnects();
+      this.localBridge.stopPolling();
     } else {
       try {
         await set(ref(this.db, `rooms/${code}/members/${uid}`), null);
@@ -856,6 +1151,29 @@ export class PartyService {
     const uid = this.getUid();
 
     if (this.useLocalFallback || !this.db) {
+      // 1. Claim on server atomically
+      try {
+        const sRes = await fetch('/api/party', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'claim_seat',
+            code,
+            seatId,
+            uid
+          })
+        });
+        const sData = (await sRes.json()) as any;
+        if (sData && !sData.success) {
+          return {
+            success: false,
+            reason: sData.reason || `Seat ${seatId} is already occupied. Choose another recliner.`
+          };
+        }
+      } catch (err) {
+        console.warn('Server claim_seat check error:', err);
+      }
+
       const res = this.localBridge.runTransaction(`seats/${seatId}`, (currentOccupant) => {
         if (!currentOccupant || currentOccupant === uid) {
           return uid;
@@ -932,6 +1250,17 @@ export class PartyService {
     const uid = this.getUid();
 
     if (this.useLocalFallback || !this.db) {
+      fetch('/api/party', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'release_seat',
+          code,
+          seatId: target,
+          uid
+        })
+      }).catch(() => {});
+
       const cur = this.localBridge.get(`seats/${target}`);
       if (cur === uid) {
         this.localBridge.set(`seats/${target}`, null);
